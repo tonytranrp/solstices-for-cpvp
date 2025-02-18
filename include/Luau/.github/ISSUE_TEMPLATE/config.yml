@@ -1,0 +1,4 @@
+blank_issues_enabled: false
+  - name: Questions
+    url: https://github.com/luau-lang/luau/discussions
+    about: Please use GitHub Discussions if you have questions or need help.
