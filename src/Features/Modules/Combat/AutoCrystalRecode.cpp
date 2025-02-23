@@ -12,10 +12,10 @@
 #include <SDK/Minecraft/Network/Packets/PlayerActionPacket.hpp>
 #include <SDK/Minecraft/World/BlockLegacy.hpp>
 #include <SDK/Minecraft/World/Chunk/LevelChunk.hpp>
-#include <SDK/Minecraft/World/Chunk/SubChunkBlockStorage.hpp>
+#include <SDK/Minecraft/World/Chunk/SubChunkBlockStorage.hpp>a
 
 
-std::mutex AutoCrystalRecode::blockmutex = {};
+static std::mutex blockmutex = {};
 std::unordered_map<BlockPos, AutoCrystalRecode::FoundBlock> AutoCrystalRecode::mFoundBlocks = {};
 void AutoCrystalRecode::moveToNext() {
     if (!ClientInstance::get()->getLevelRenderer()) {
@@ -97,27 +97,29 @@ bool AutoCrystalRecode::processSub(ChunkPos processChunk, int index) {
         [&](const Block* found, const BlockPos& pos) {
             auto it = mFoundBlocks.find(pos);
 
+            // If no block is found or it is air, mark for removal.
             if (!found || found->mLegacy->getBlockId() == 0) {
                 if (it != mFoundBlocks.end()) blocksToErase.push_back(pos);
                 return;
             }
 
-            // Ensure the base block is either OBSIDIAN (49) or BEDROCK (7)
+            // Only consider blocks with ID OBSIDIAN (49) or BEDROCK (7)
             int blockId = found->mLegacy->getBlockId();
             if (blockId != 49 && blockId != 7) {
                 if (it != mFoundBlocks.end()) blocksToErase.push_back(pos);
                 return;
             }
 
-            int exposedHeight = BlockUtils::getExposedHeight(pos , 2);
+            // Check the exposed height.
+            int exposedHeight = BlockUtils::getExposedHeight(pos,2);
             if (exposedHeight == 0) {
                 if (it != mFoundBlocks.end()) blocksToErase.push_back(pos);
                 return;
             }
 
-            mFoundBlocks.emplace(pos, FoundBlock{ found, AABB(pos, glm::vec3(1.f, 1.f, 1.f)), ImColor(0.f, 1.f, 0.f, 1.f) });
-            if (it != mFoundBlocks.end()) {
-                blocksToErase.push_back(pos);
+            // If we have a valid block with exposed height > 0, insert it if not already present.
+            if (it == mFoundBlocks.end()) {
+                mFoundBlocks.emplace(pos, FoundBlock{ found, AABB(pos, glm::vec3(1.f, 1.f, 1.f)), ImColor(0.f, 1.f, 0.f, 1.f) });
             }
         }
     );
@@ -135,17 +137,36 @@ void AutoCrystalRecode::reset()
     std::lock_guard<std::mutex> lock(blockmutex); // Lock mutex
 
     ClientInstance* ci = ClientInstance::get();
-    Actor* player = ci->getLocalPlayer();
+    auto player = ci->getLocalPlayer();
+    if (!player) return;
+    float closestDist = std::numeric_limits<float>::max();
+    auto* level = player->getLevel();
+    if (!level) return;
+    const auto& runtimeActors = level->getRuntimeActorList();
+    for (auto* actor : runtimeActors) {
+        if (actor == player || !actor->isValid() || !actor->isPlayer())
+            continue;
+        float dist = glm::distance(*actor->getPos(), *player->getPos());
+        if (dist > mRadius.mValue)
+            continue;
+        if (dist < closestDist) {
+            closestDist = dist;
+            Target = actor;
+        }
+    }
+    if (!Target) return;
+
+
     mSearchStart = NOW;
     mFoundBlocks.clear();
     mStepsCount = 0;
     mSteps = 1;
     mDirectionIndex = 0;
     mSubChunkIndex = 0;
-    if (!player) return;
+
     BlockSource* blockSource = ci->getBlockSource();
-    if (!target) return;
-    mSearchCenter = ChunkPos(*target->getPos());
+    mPossiblePlacements.clear();
+    mSearchCenter = ChunkPos(*Target->getPos());
     mCurrentChunkPos = mSearchCenter;
 }
 
@@ -186,9 +207,29 @@ void AutoCrystalRecode::onBlockChangedEvent(BlockChangedEvent& event)
         return;
     }
     std::lock_guard<std::mutex> lock(blockmutex); // Lock mutex
-    if (!target) return;
+
     auto dabl = BlockInfo(event.mNewBlock, event.mBlockPos);
-    if (dabl.getDistance(*target->getPos()) > 11) return;
+    float closestDist = std::numeric_limits<float>::max();
+    auto ci = ClientInstance::get();
+    if (!ci) return;
+    auto player = ci->getLocalPlayer();
+    if (!player) return;
+    auto* level = player->getLevel();
+    if (!level) return;
+    const auto& runtimeActors = level->getRuntimeActorList();
+    for (auto* actor : runtimeActors) {
+        if (actor == player || !actor->isValid())
+            continue;
+        float dist = glm::distance(*actor->getPos(), *player->getPos());
+        if (dist > mRadius.mValue)
+            continue;
+        if (dist < closestDist) {
+            closestDist = dist;
+            Target = actor;
+        }
+    }
+    if (!Target) return;
+    if (dabl.getDistance(*Target->getPos()) > mRadius.mValue) return;
 
     ChunkPos chunkPos = ChunkPos(event.mBlockPos);
     int subChunk = (event.mBlockPos.y - ClientInstance::get()->getBlockSource()->getBuildDepth()) >> 4;
@@ -229,29 +270,31 @@ void AutoCrystalRecode::onBaseTickEvent(BaseTickEvent& event)
 
     lastUpdate = now;
     auto ci = ClientInstance::get();
+    if (!ci) return;
     auto player = ci->getLocalPlayer();
     if (!player) return;
     auto blockSource = ci->getBlockSource();
-
-    auto actors = ActorUtils::getActorList(true, false);
-    if (actors.empty()) return;
-
-  
-    for (auto* actor : actors) {
-        if (actor && actor->isValid() && actor != player && actor->isPlayer()&& actor->distanceTo(player) <= 11) {
-            target = actor;
-            break;
+    float closestDist = std::numeric_limits<float>::max();
+    auto* level = player->getLevel();
+    if (!level) return;
+    const auto& runtimeActors = level->getRuntimeActorList();
+    for (auto* actor : runtimeActors) {
+        if (actor == player || !actor->isValid())
+            continue;
+        float dist = glm::distance(*actor->getPos(), *player->getPos());
+        if (dist > mRadius.mValue)
+            continue;
+        if (dist < closestDist) {
+            closestDist = dist;
+            Target = actor;
         }
     }
-
-    if (!target) return;
-    BlockPos targetPos = *target->getPos();
-
+    if (!Target) return;
     if (glm::distance(glm::vec2(mCurrentChunkPos), glm::vec2(mSearchCenter)) > mChunkRadius.mValue)
     {
         //spdlog::debug("Resetting search, found {} block of interest in {}ms", mFoundBlocks.size(), NOW - mSearchStart);
         mSearchStart = NOW;
-        mSearchCenter = ChunkPos(targetPos);
+        mSearchCenter = ChunkPos(*Target->getPos());
         mCurrentChunkPos = mSearchCenter;
         mStepsCount = 0;
         mSteps = 1;
@@ -270,16 +313,33 @@ void AutoCrystalRecode::onBaseTickEvent(BaseTickEvent& event)
         moveToNext();
     }
 
-    BlockPos playerPos = *target->getPos();
+    BlockPos playerPos = *player->getPos();
 
     int subChunk = (playerPos.y - ClientInstance::get()->getBlockSource()->getBuildDepth()) >> 4;
     bool result = false;
     tryProcessSub(result, ChunkPos(playerPos), subChunk);
-
+    std::vector<PlacePosition> newPlacements = findPlacePositions();
+    if (newPlacements.size() != mPossiblePlacements.size() ||
+        !std::equal(newPlacements.begin(), newPlacements.end(), mPossiblePlacements.begin(),
+            [](const PlacePosition& a, const PlacePosition& b) {
+                return a.position == b.position &&
+                    a.targetDamage == b.targetDamage &&
+                    a.selfDamage == b.selfDamage;
+            }))
+    {
+        // Swap in the new placements if they have changed.
+        mPossiblePlacements.swap(newPlacements);
+    }
+    else {
+        // Optionally clear newPlacements to free extra capacity.
+        newPlacements.clear();
+    }
+    
     if (!result)
     {
         spdlog::critical("Failed to process subchunk [scIndex: {}/{}, chunkPos: ({}, {})]", subChunk, (blockSource->getBuildHeight() - blockSource->getBuildDepth()) / 16, playerPos.x, playerPos.z);
     }
+
 
 }
 
@@ -301,6 +361,48 @@ void AutoCrystalRecode::onPacketInEvent(PacketInEvent& event)
         if (packet->mAction == PlayerActionType::Respawn) reset();
     }
 }
+std::vector<AutoCrystalRecode::PlacePosition> AutoCrystalRecode::findPlacePositions() {
+    std::vector<PlacePosition> positions;
+    auto* player = ClientInstance::get()->getLocalPlayer();
+    if (!player) return positions;
+    auto* bs = ClientInstance::get()->getBlockSource();
+    if (!bs) return positions;
+
+    // Use the local player as the target (for testing self-damage)
+    float closestDist = std::numeric_limits<float>::max();
+    auto* level = player->getLevel();
+    if (!level) return positions;
+    const auto& runtimeActors = level->getRuntimeActorList();
+    for (auto* actor : runtimeActors) {
+        if (actor == player || !actor->isValid() || !actor->isPlayer())
+            continue;
+        float dist = glm::distance(*actor->getPos(), *player->getPos());
+        if (dist > mRadius.mValue)
+            continue;
+        if (dist < closestDist) {
+            closestDist = dist;
+            Target = actor;
+        }
+    }
+    if (!Target) return positions;
+    // Loop over candidate blocks in mFoundBlocks.
+    for (auto& [pos, block] : mFoundBlocks) {
+        // Use the block position directly.
+        // Calculate damage at this position.
+        if (!canPlaceCrystal(pos,Target))
+            continue;
+        float targetDamage = calculateDamage(pos, Target);
+        // For testing, only add placements that do at least 20 damage.
+        if (targetDamage >= 20) {
+            // For now, self-damage is set to 0; add calculation if desired.
+            positions.emplace_back(pos, targetDamage, 0.f);
+        }
+    }
+
+    // Sort placements so that higher target damage comes first.
+    std::sort(positions.begin(), positions.end(), PlacePositionCompare());
+    return positions;
+}
 
 void AutoCrystalRecode::onRenderEvent(RenderEvent& event)
 {
@@ -321,42 +423,39 @@ void AutoCrystalRecode::onRenderEvent(RenderEvent& event)
         reset();
         return;
     }
-    if (!target) return;
-    glm::ivec3 playerPos = *target->getPos();
-
-    if (mRenderCurrentChunk.mValue)
-    {
-        ChunkPos currentChunkPos = ChunkPos(mCurrentChunkPos);
-        glm::vec3 pos = glm::vec3(currentChunkPos.x * 16, 0, currentChunkPos.y * 16);
-
-        // Render the current chunk
-        AABB chunkAABB = AABB(pos, glm::vec3(16.f, 1.f, 16.f));
-        std::vector<ImVec2> chunkPoints = MathUtils::getImBoxPoints(chunkAABB);
-
-        if (mRenderMode.mValue == BlockRenderMode::Both || mRenderMode.mValue == BlockRenderMode::Outline) {
-            drawList->AddPolyline(chunkPoints.data(), chunkPoints.size(), ImColor(1.f, 1.f, 1.f), 0, 2.0f);
+    float closestDist = std::numeric_limits<float>::max();
+    auto* level = player->getLevel();
+    if (!level) return;
+    const auto& runtimeActors = level->getRuntimeActorList();
+    for (auto* actor : runtimeActors) {
+        if (actor == player || !actor->isValid())
+            continue;
+        float dist = glm::distance(*actor->getPos(), *player->getPos());
+        if (dist > mRadius.mValue)
+            continue;
+        if (dist < closestDist) {
+            closestDist = dist;
+            Target = actor;
         }
-        if (mRenderMode.mValue == BlockRenderMode::Both || mRenderMode.mValue == BlockRenderMode::Filled) {
+    } 
+    if (!Target) return;
+    glm::ivec3 playerPos = *Target->getPos();
+   
+    if (!mPossiblePlacements.empty()) {
+        // Get the background draw list from ImGui.
+        auto drawList = ImGui::GetBackgroundDrawList();
 
-            drawList->AddConvexPolyFilled(chunkPoints.data(), chunkPoints.size(), ImColor(1.f, 1.f, 1.f, 0.25f));
-        }
+        // Create an axis-aligned bounding box for the chosen block.
+        AABB candidateAABB = AABB(mPossiblePlacements[0].position, glm::vec3(1.f, 1.f, 1.f));
+        std::vector<ImVec2> candidatePoints = MathUtils::getImBoxPoints(candidateAABB);
+
+        // Define a color for the candidate (green in this example).
+        ImColor candidateColor = ImColor(0.f, 1.f, 0.f, 1.f);
+        // Draw the outline of the candidate block.
+        drawList->AddPolyline(candidatePoints.data(), candidatePoints.size(), candidateColor, 0, 2.0f);
+
+    
     }
-
-    auto enabled = getEnabledBlocks();
-
-    for (auto& [pos, block] : mFoundBlocks)
-    {
-        if (distance(glm::vec3(pos), glm::vec3(playerPos)) > mRadius.mValue) continue;
-
-        ImColor& color = block.color;
-        AABB& blockAABB = block.aabb;
-        std::vector<ImVec2> imPoints = MathUtils::getImBoxPoints(blockAABB);
-
-        if (mRenderMode.mValue == BlockRenderMode::Both || mRenderMode.mValue == BlockRenderMode::Outline) {
-            drawList->AddPolyline(imPoints.data(), imPoints.size(), color, 0, 2.0f);
-        }
-        if (mRenderMode.mValue == BlockRenderMode::Both || mRenderMode.mValue == BlockRenderMode::Filled) {
-            drawList->AddConvexPolyFilled(imPoints.data(), imPoints.size(), ImColor(color.Value.x, color.Value.y, color.Value.z, 0.25f));
-        }
-    }
+    
+    
 }

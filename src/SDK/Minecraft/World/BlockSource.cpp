@@ -59,39 +59,35 @@ HitResult BlockSource::checkRayTrace(glm::vec3 start, glm::vec3 end, void* playe
     return clip(start, end, false, ShapeType::All, 200, false, false, player);
 }
 float BlockSource::getSeenPercent(const glm::vec3& viewerPos, const AABB& boundingBox) {
+    // If the viewer is inside the bounding box, return full visibility.
     if (boundingBox.mMin.x <= viewerPos.x && viewerPos.x <= boundingBox.mMax.x &&
         boundingBox.mMin.y <= viewerPos.y && viewerPos.y <= boundingBox.mMax.y &&
         boundingBox.mMin.z <= viewerPos.z && viewerPos.z <= boundingBox.mMax.z) {
         return 1.0f;
     }
 
-    float xSize = boundingBox.mMax.x - boundingBox.mMin.x;
-    float ySize = boundingBox.mMax.y - boundingBox.mMin.y;
-    float zSize = boundingBox.mMax.z - boundingBox.mMin.z;
-
-    float xInc = 1.0f / ((xSize + xSize) + 1.0f);
-    float yInc = 1.0f / ((ySize + ySize) + 1.0f);
-    float zInc = 1.0f / ((zSize + zSize) + 1.0f);
-
-    if (xInc < 0.0f || yInc < 0.0f || zInc < 0.0f) {
-        return 0.0f;
-    }
-
+    // Use a fixed sample count per dimension for consistency.
+    const int sampleCount = 2;
+    const float step = 1.0f / (sampleCount - 1);
+    const int totalPoints = sampleCount * sampleCount * sampleCount;
     int visiblePoints = 0;
-    int totalPoints = 0;
 
-    for (float x = 0.0f; x <= 1.0f; x += xInc) {
-        for (float y = 0.0f; y <= 1.0f; y += yInc) {
-            for (float z = 0.0f; z <= 1.0f; z += zInc) {
+    // Precompute the bounding box size.
+    glm::vec3 delta = boundingBox.mMax - boundingBox.mMin;
+
+    // Sample uniformly over the box.
+    for (int i = 0; i < sampleCount; i++) {
+        float x = i * step;
+        for (int j = 0; j < sampleCount; j++) {
+            float y = j * step;
+            for (int k = 0; k < sampleCount; k++) {
+                float z = k * step;
                 glm::vec3 samplePoint(
-                    boundingBox.mMin.x + (boundingBox.mMax.x - boundingBox.mMin.x) * x,
-                    boundingBox.mMin.y + (boundingBox.mMax.y - boundingBox.mMin.y) * y + 0.1f,
-                    boundingBox.mMin.z + (boundingBox.mMax.z - boundingBox.mMin.z) * z
+                    boundingBox.mMin.x + delta.x * x,
+                    boundingBox.mMin.y + delta.y * y + 0.1f, // slight vertical offset as before
+                    boundingBox.mMin.z + delta.z * z
                 );
-
                 auto result = checkRayTrace(viewerPos, samplePoint);
-                totalPoints++;
-
                 if (result.mType == HitType::NOTHING) {
                     visiblePoints++;
                 }

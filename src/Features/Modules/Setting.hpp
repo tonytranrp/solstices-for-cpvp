@@ -15,6 +15,7 @@ enum class SettingType
     Enum,
     Color,
     String,
+    Keybind
 };
 
 class Setting
@@ -124,6 +125,21 @@ public:
     T as() const
     {
         return static_cast<T>(mValue);
+    }
+};
+class KeybindSetting : public Setting {
+public:
+    int mKey = 0; // The bound key; 0 means unbound.
+
+    KeybindSetting(std::string name, std::string description, int key = 0)
+        : Setting(std::move(name), std::move(description), SettingType::Keybind), mKey(key)
+    {
+    }
+
+    nlohmann::json serialize() override {
+        nlohmann::json j = Setting::serialize();
+        j["keybind"] = mKey;
+        return j;
     }
 };
 

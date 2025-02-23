@@ -39,7 +39,10 @@ public:
     bool displayColorPicker = false;
     bool resetPosition = false;
     uint64_t lastReset = 0;
-
+     static bool isKeybindBinding;
+    static KeybindSetting* lastKeybindSetting;
+    static bool isSearching;
+    static std::string searchingModule; // holds current search text
     // Colour
     ImColor textColor = ImColor(255, 255, 255);
     ImColor darkBlack = ImColor(24, 24, 24 );

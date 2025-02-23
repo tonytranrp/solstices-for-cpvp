@@ -28,10 +28,9 @@ void* SetupAndRenderHook::onSetupAndRender(void* screenView, void* mcuirc)
     auto ci = ClientInstance::get();
     if (!ci) return original(screenView, mcuirc);
 
-    auto player = ClientInstance::get()->getLocalPlayer();
-
-    glm::vec3 origin = glm::vec3(0, 0, 0);
-    glm::vec3 playerPos = glm::vec3(0, 0, 0);
+    auto player = ci->getLocalPlayer();
+    glm::vec3 origin(0, 0, 0);
+    glm::vec3 playerPos(0, 0, 0);
 
     if (player && ci->getLevelRenderer())
     {
@@ -39,7 +38,11 @@ void* SetupAndRenderHook::onSetupAndRender(void* screenView, void* mcuirc)
         playerPos = player->getRenderPositionComponent()->mPosition;
     }
 
-    if (D3DHook::FrameTransforms) D3DHook::FrameTransforms->push({ ci->getViewMatrix(), origin, playerPos, ci->getFov() });
+    // Ensure the FrameTransforms queue is initialized
+    if (!D3DHook::FrameTransforms)
+        D3DHook::FrameTransforms = std::make_unique<std::queue<FrameTransform>>();
+
+    D3DHook::FrameTransforms->push({ ci->getViewMatrix(), origin, playerPos, ci->getFov() });
 
     return original(screenView, mcuirc);
 }

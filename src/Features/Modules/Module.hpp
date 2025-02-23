@@ -39,9 +39,11 @@ public:
     int mEnableWhileHeld = false;
 
     BoolSetting mVisibleInArrayList = BoolSetting("Visible", "Whether the module is visible in the Arraylist", true);
+    KeybindSetting mKeybind = KeybindSetting("Keybind", "The module keybind", 0); // default key is 0 (none)
 
     std::vector<class Setting*> mSettings = {
-        &mVisibleInArrayList
+        &mVisibleInArrayList,
+        &mKeybind   // <-- add the keybind setting here
     };
 
     Module(std::string name, std::string description, const ModuleCategory category, const int key, const bool enabled, std::unordered_map<NamingStyle, std::string> names = {})

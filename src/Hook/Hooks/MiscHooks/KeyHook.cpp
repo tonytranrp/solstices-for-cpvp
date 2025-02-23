@@ -8,6 +8,7 @@
 #include <Features/Modules/Visual/ClickGui.hpp>
 #include <Features/Events/KeyEvent.hpp>
 #include <SDK/Minecraft/ClientInstance.hpp>
+#include <Features/GUI/ModernDropdown.hpp>
 
 std::unique_ptr<Detour> KeyHook::mDetour = nullptr;
 
@@ -126,97 +127,103 @@ void KeyHook::onKey(uint32_t key, bool isDown)
 {
     auto oFunc = mDetour->getOriginal<&onKey>();
 
-    if (key == VK_END && isDown && ClientInstance::get()->getScreenName() != "chat_screen" && !ImGui::GetIO().WantCaptureKeyboard && !ImGui::GetIO().WantTextInput)
+    if (key == VK_END && isDown &&
+        ClientInstance::get()->getScreenName() != "chat_screen" &&
+        !ImGui::GetIO().WantCaptureKeyboard && !ImGui::GetIO().WantTextInput)
     {
         Solstice::mRequestEject = true;
     }
 
     Keyboard::mPressedKeys[key] = isDown;
 
+    // Flag to indicate if this key event was consumed by binding logic.
+    bool bindingConsumed = false;
+
+    // If we're in key-binding mode and a key is pressed, update the binding.
+    if (ModernGui::isKeybindBinding && ModernGui::lastKeybindSetting && isDown) {
+        int newKey = (key == VK_ESCAPE) ? 0 : key;
+        ModernGui::lastKeybindSetting->mKey = newKey;
+
+        // Update the module's mKey by searching for the module that holds this keybind setting.
+        for (auto& module : gFeatureManager->mModuleManager->getModules()) {
+            if (&module->mKeybind == ModernGui::lastKeybindSetting) {
+                module->mKey = newKey;
+                break;
+            }
+        }
+
+        ModernGui::isKeybindBinding = false;
+        if (key == VK_ESCAPE) {
+            ClientInstance::get()->playUi("random.break", 0.75f, 1.0f);
+        }
+        else {
+            ClientInstance::get()->playUi("random.orb", 0.75f, 1.0f);
+        }
+        bindingConsumed = true; // mark that we handled this key for binding
+        // Do not return here, so the key event will continue to be processed.
+    }
     auto holder = nes::make_holder<KeyEvent>(key, isDown);
-    if (!gFeatureManager)
-    {
+    if (!gFeatureManager) {
         spdlog::critical("FeatureManager is null");
     }
-    if (!gFeatureManager->mDispatcher)
-    {
+    if (!gFeatureManager->mDispatcher) {
         spdlog::critical("Dispatcher is null");
     }
 
     gFeatureManager->mDispatcher->trigger<KeyEvent>(holder);
-
     if (holder->mCancelled) return;
-
     if (!ImGui::GetCurrentContext()) return;
     ImGuiIO& io = ImGui::GetIO();
 
     ImGuiKey imKey = ImGui_ImplWin32_VirtualKeyToImGuiKey(key);
     io.AddKeyEvent(imKey, isDown);
-    if (isDown)
-    {
+    if (isDown) {
         HKL layout = GetKeyboardLayout(0);
         int scanCode = MapVirtualKeyA(key, MAPVK_VK_TO_VSC);
         BYTE translation[2];
         BYTE keyState[256] = { 0 };
         GetKeyboardState(keyState);
         int result = ToAscii(key, scanCode, keyState, (LPWORD)translation, 0);
-
         if (result == 1) {
-            // If a single character is returned, return it
             char c = static_cast<char>(translation[0]);
             io.AddInputCharacter(c);
         }
         else if (result == 2) {
-            // If a dead key or a special character is returned, return the second character in the buffer
             char sc = static_cast<char>(translation[1]);
             io.AddInputCharacter(sc);
         }
     }
 
-    // Return and don't call oFunc if ImGui wants to capture keyboard or text input
-    if (io.WantCaptureKeyboard || io.WantTextInput)
-    {
+    // If ImGui wants to capture the keyboard or text, then skip.
+    if (io.WantCaptureKeyboard || io.WantTextInput) {
+        // But still call the original function so ImGui is updated.
+        oFunc(key, isDown);
         return;
     }
 
-    oFunc(key, isDown);
+    // Only process module toggling if the key event wasn't consumed by binding.
+    if (!bindingConsumed) {
+        const auto* clickGui = gFeatureManager->mModuleManager->getModule<ClickGui>();
+        for (auto& module : gFeatureManager->mModuleManager->getModules()) {
+            if (ClientInstance::get()->getMouseGrabbed() && module.get() != clickGui)
+                continue;
+            if (ClientInstance::get()->getScreenName() == "chat_screen")
+                continue;
 
-    // Look for modules
-    const auto* clickGui = gFeatureManager->mModuleManager->getModule<ClickGui>();
-
-    for (auto& module : gFeatureManager->mModuleManager->getModules())
-    {
-        if (ClientInstance::get()->getMouseGrabbed() && module.get() != clickGui) continue;
-        if (ClientInstance::get()->getScreenName() == "chat_screen") continue;
-
-        if (module->mKey == key)
-        {
-            if (module->mEnableWhileHeld)
-            {
-                module->mWantedState = isDown;
-            }
-            else if (isDown)
-            {
-                module->toggle();
-            }
-        }
-
-        /*if (isDown)
-        {
-            for (Setting* setting : module->mSettings)
-            {
-                if (auto boolSetting = dynamic_cast<BoolSetting*>(setting))
-                {
-                    if (boolSetting->mKey == key)
-                    {
-                        bool oldValue = static_cast<bool>(*boolSetting);
-                        boolSetting->setValue(!oldValue);
-                    }
+            if (module->mKey == key) {
+                if (module->mEnableWhileHeld) {
+                    module->mWantedState = isDown;
+                }
+                else if (isDown) {
+                    module->toggle();
                 }
             }
-        }*/
+        }
     }
+
+    oFunc(key, isDown);
 }
+
 
 void KeyHook::init()
 {
