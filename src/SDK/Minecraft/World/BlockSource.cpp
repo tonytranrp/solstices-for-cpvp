@@ -58,42 +58,47 @@ HitResult BlockSource::checkRayTrace(glm::vec3 start, glm::vec3 end, void* playe
 {
     return clip(start, end, false, ShapeType::All, 200, false, false, player);
 }
+/**
+ * @brief Computes the percentage of a bounding box that is visible from a given viewer position.
+ *
+ * This function samples the eight corners of the bounding box (with a slight vertical offset)
+ * and uses ray tracing to determine which sample points are unobstructed. If the viewer is inside
+ * the bounding box, full visibility (1.0) is returned.
+ *
+ * @param viewerPos The position of the viewer.
+ * @param boundingBox The axis-aligned bounding box to test.
+ * @return The visibility percentage (0.0 to 1.0).
+ */
 float BlockSource::getSeenPercent(const glm::vec3& viewerPos, const AABB& boundingBox) {
     // If the viewer is inside the bounding box, return full visibility.
-    if (boundingBox.mMin.x <= viewerPos.x && viewerPos.x <= boundingBox.mMax.x &&
-        boundingBox.mMin.y <= viewerPos.y && viewerPos.y <= boundingBox.mMax.y &&
-        boundingBox.mMin.z <= viewerPos.z && viewerPos.z <= boundingBox.mMax.z) {
+    if (viewerPos.x >= boundingBox.mMin.x && viewerPos.x <= boundingBox.mMax.x &&
+        viewerPos.y >= boundingBox.mMin.y && viewerPos.y <= boundingBox.mMax.y &&
+        viewerPos.z >= boundingBox.mMin.z && viewerPos.z <= boundingBox.mMax.z) {
         return 1.0f;
     }
 
-    // Use a fixed sample count per dimension for consistency.
-    const int sampleCount = 2;
-    const float step = 1.0f / (sampleCount - 1);
-    const int totalPoints = sampleCount * sampleCount * sampleCount;
+    // For a fixed sampleCount of 2, the eight sample points are the corners.
+    const int totalPoints = 8;
     int visiblePoints = 0;
 
-    // Precompute the bounding box size.
-    glm::vec3 delta = boundingBox.mMax - boundingBox.mMin;
+    const glm::vec3 corners[totalPoints] = {
+        {boundingBox.mMin.x, boundingBox.mMin.y, boundingBox.mMin.z},
+        {boundingBox.mMin.x, boundingBox.mMin.y, boundingBox.mMax.z},
+        {boundingBox.mMin.x, boundingBox.mMax.y, boundingBox.mMin.z},
+        {boundingBox.mMin.x, boundingBox.mMax.y, boundingBox.mMax.z},
+        {boundingBox.mMax.x, boundingBox.mMin.y, boundingBox.mMin.z},
+        {boundingBox.mMax.x, boundingBox.mMin.y, boundingBox.mMax.z},
+        {boundingBox.mMax.x, boundingBox.mMax.y, boundingBox.mMin.z},
+        {boundingBox.mMax.x, boundingBox.mMax.y, boundingBox.mMax.z}
+    };
 
-    // Sample uniformly over the box.
-    for (int i = 0; i < sampleCount; i++) {
-        float x = i * step;
-        for (int j = 0; j < sampleCount; j++) {
-            float y = j * step;
-            for (int k = 0; k < sampleCount; k++) {
-                float z = k * step;
-                glm::vec3 samplePoint(
-                    boundingBox.mMin.x + delta.x * x,
-                    boundingBox.mMin.y + delta.y * y + 0.1f, // slight vertical offset as before
-                    boundingBox.mMin.z + delta.z * z
-                );
-                auto result = checkRayTrace(viewerPos, samplePoint);
-                if (result.mType == HitType::NOTHING) {
-                    visiblePoints++;
-                }
-            }
+    // Apply a slight vertical offset to each sample point and perform ray tracing.
+    for (int i = 0; i < totalPoints; ++i) {
+        glm::vec3 samplePoint = corners[i];
+        samplePoint.y += 0.1f; // vertical offset
+        if (checkRayTrace(viewerPos, samplePoint).mType == HitType::NOTHING) {
+            ++visiblePoints;
         }
     }
-
-    return static_cast<float>(visiblePoints) / static_cast<float>(totalPoints);
+    return static_cast<float>(visiblePoints) / totalPoints;
 }

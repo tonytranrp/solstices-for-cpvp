@@ -2,9 +2,23 @@
 #include <vector>
 #include <Features/FeatureManager.hpp>
 #include <Features/Modules/Setting.hpp>
-
-
-
+#include <Features/Modules/ModuleCategory.hpp>
+#include <Features/Modules/Visual/ClickGui.hpp>
+#include <Utils/FontHelper.hpp>
+#include <Utils/MiscUtils/ImRenderUtils.hpp>
+#include <Utils/MiscUtils/MathUtils.hpp>
+#include <Features/Modules/Setting.hpp>
+#include <Features/Modules/Visual/Interface.hpp>
+#include <SDK/Minecraft/ClientInstance.hpp>
+#include <SDK/Minecraft/Rendering/GuiData.hpp>
+#include <Utils/Keyboard.hpp>
+#include <Utils/StringUtils.hpp>
+#include <Utils/MiscUtils/ColorUtils.hpp>
+#include <Features/GUI/Settings/EnumSettingRenderer.hpp>
+#include <Features/GUI/Settings/KeybindSettingRenderer.hpp>
+#include <Features/GUI/Settings/NumberSettingRenderer.hpp>
+#include <Features/GUI/Settings/ColorSettingRenderer.hpp>
+#include <Features/GUI/Settings/BoolSettingRenderer.hpp>
 //
 // Created by Tozic 7/15/2024.
 //

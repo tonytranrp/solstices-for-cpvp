@@ -7,6 +7,7 @@
 #include <MinHook.h>
 
 #include "Hooks/ActorHooks/ActorModelHook.hpp"
+#include "Hooks/ActorHooks/ActorGlideHook.hpp"
 #include "Hooks/ActorHooks/AnimationHooks.hpp"
 #include "Hooks/ActorHooks/NametagRenderHook.hpp"
 #include "Hooks/ActorHooks/GameModeStopDestroyHook.hpp"
@@ -68,6 +69,7 @@ void HookManager::init(bool initLp)
         ADD_HOOK(RenderItemInHandHook);
         ADD_HOOK(PreGameHook);
         ADD_HOOK(NametagRenderHook);
+        ADD_HOOK(ActorGlideHook);
        // ADD_HOOK(GameModeStartDestroyHook);  // Add these
        // ADD_HOOK(GameModeStopDestroyHook);   // two hooks
 

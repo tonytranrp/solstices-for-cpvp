@@ -3,18 +3,7 @@
 //
 
 #include "ModernDropdown.hpp"
-#include <Features/Modules/ModuleCategory.hpp>
-#include <Features/Modules/Visual/ClickGui.hpp>
-#include <Utils/FontHelper.hpp>
-#include <Utils/MiscUtils/ImRenderUtils.hpp>
-#include <Utils/MiscUtils/MathUtils.hpp>
-#include <Features/Modules/Setting.hpp>
-#include <Features/Modules/Visual/Interface.hpp>
-#include <SDK/Minecraft/ClientInstance.hpp>
-#include <SDK/Minecraft/Rendering/GuiData.hpp>
-#include <Utils/Keyboard.hpp>
-#include <Utils/StringUtils.hpp>
-#include <Utils/MiscUtils/ColorUtils.hpp>
+
 bool ModernGui::isKeybindBinding = false;
 bool ModernGui::isSearching = false;
 KeybindSetting* ModernGui::lastKeybindSetting = nullptr;
@@ -41,124 +30,104 @@ ImVec4 ModernGui::getCenter(ImVec4& vec)
 void ModernGui::render(float animation, float inScale, int& scrollDirection, char* h, float blur, float midclickRounding, bool isPressingShift)
 {
     static auto interfaceMod = gFeatureManager->mModuleManager->getModule<Interface>();
-    bool lowercase = interfaceMod->mNamingStyle.mValue == NamingStyle::Lowercase || interfaceMod->mNamingStyle.mValue == NamingStyle::LowercaseSpaced;
+    bool lowercase = (interfaceMod->mNamingStyle.mValue == NamingStyle::Lowercase ||
+        interfaceMod->mNamingStyle.mValue == NamingStyle::LowercaseSpaced);
 
+    // Push the preferred font.
     FontHelper::pushPrefFont(true, false, true);
+
+    // Get screen and delta time.
     ImVec2 screen = ImRenderUtils::getScreenSize();
     float deltaTime = ImGui::GetIO().DeltaTime;
     auto drawList = ImGui::GetBackgroundDrawList();
 
-    // If the reset position bool is true and lastReset was more than 100ms ago, reset the position
-    if (resetPosition && NOW - lastReset > 100)
-    {
+    // Reset category positions if needed.
+    if (resetPosition && NOW - lastReset > 100) {
         catPositions.clear();
-        ImVec2 screen = ImRenderUtils::getScreenSize();
-        auto categories = ModuleCategoryNames;
-        if (catPositions.empty())
-        {
-            float centerX = screen.x / 2.f;
-            float xPos = centerX - (categories.size() * (catWidth + catGap) / 2);
-            for (std::string& category : categories)
-            {
-                CategoryPosition pos;
-                pos.x = xPos;
-                pos.y = catGap * 2;
-                pos.x = std::round(pos.x / 2) * 2;
-                pos.y = std::round(pos.y / 2) * 2;
-
-                xPos += catWidth + catGap;
-                catPositions.push_back(pos);
-            }
+        float centerX = screen.x * 0.5f;
+        // Calculate starting X so that categories are centered.
+        float xPos = centerX - (ModuleCategoryNames.size() * (catWidth + catGap) * 0.5f);
+        for (const std::string& cat : ModuleCategoryNames) {
+            CategoryPosition pos;
+            // Round positions to even numbers.
+            pos.x = std::round(xPos / 2.f) * 2.f;
+            pos.y = std::round((catGap * 2.f) / 2.f) * 2.f;
+            catPositions.push_back(pos);
+            xPos += catWidth + catGap;
         }
         resetPosition = false;
     }
 
-    /*ImRenderUtils::fillRectangle(
-            ImVec4(0, 0, screen.x, screen.y),
-            ImColor(0, 0, 0), animation * 0.38f);*/
-    drawList->AddRectFilled(ImVec2(0, 0), ImVec2(screen.x, screen.y), IM_COL32(0, 0, 0, 255 * animation * 0.38f));
-    ImRenderUtils::addBlur(ImVec4(0.f, 0.f, screen.x, screen.y),
-                           animation * blur, 0);
+    // Draw background with blur.
+    drawList->AddRectFilled(ImVec2(0, 0), screen, IM_COL32(0, 0, 0, 255 * animation * 0.38f));
+    ImRenderUtils::addBlur(ImVec4(0.f, 0.f, screen.x, screen.y), animation * blur, 0);
 
-    // Draw a glow rect on the bottom 1/3 of the screen
-    ImColor shadowRectColor = ColorUtils::getThemedColor(0);
-    shadowRectColor.Value.w = 0.5f * animation;
-
-    // Draw a gradient rect on the bottom 1/3 of the screen with the shadow color, and making the alpha taper off as it goes up
-    float firstheight = (screen.y - screen.y / 3);
-    // As the animation reaches 0, the height should go below the screen height
-    firstheight = MathUtils::lerp(screen.y, firstheight, inScale);
+    // Draw a gradient glow at the bottom third.
+    ImColor shadowColor = ColorUtils::getThemedColor(0);
+    shadowColor.Value.w = 0.5f * animation;
+    float baseHeight = screen.y - screen.y / 3;
+    float glowHeight = MathUtils::lerp(screen.y, baseHeight, inScale);
     ImRenderUtils::fillGradientOpaqueRectangle(
-        ImVec4(0, firstheight, screen.x, screen.y),
-        shadowRectColor, shadowRectColor, 0.4f * inScale, 0.0f);
+        ImVec4(0, glowHeight, screen.x, screen.y),
+        shadowColor, shadowColor, 0.4f * inScale, 0.0f
+    );
 
-    static std::vector<std::string> categories = ModuleCategoryNames;
-    static std::vector<std::shared_ptr<Module>>& modules = gFeatureManager->mModuleManager->getModules();
-
+    // Retrieve modules and clickGui.
+    static const auto& categories = ModuleCategoryNames;
+    static auto& modules = gFeatureManager->mModuleManager->getModules();
     static auto* clickGui = gFeatureManager->mModuleManager->getModule<ClickGui>();
     bool isEnabled = clickGui->mEnabled;
-    std::string tooltip = "";
+    std::string tooltip;
 
+    // Compute text metrics.
     float textSize = inScale;
-    //float textHeight = ImRenderUtils::getTextHeight(textSize);
     float textHeight = ImGui::GetFont()->CalcTextSizeA(textSize * 18, FLT_MAX, -1, "").y;
 
-    int screenWidth = (int)screen.x;
-    int screenHeight = 10;
+    // (Optional) Setup a dummy window position.
+    int screenWidth = static_cast<int>(screen.x);
+    float windowX = (screenWidth - 220.f) * 0.5f; // Example window width 220.f
 
-    float windowWidth = 220.0f;
-    float windowHeight = 190.0f;
-    float yOffset = 50.0f;
-    float windowX = (screenWidth - windowWidth) * 0.5f;
-    float windowY = screenHeight;
-
-    if (displayColorPicker && isEnabled)
-    {
-        FontHelper::pushPrefFont(false, false , true);
+    // Color Picker display.
+    if (displayColorPicker && isEnabled) {
+        FontHelper::pushPrefFont(false, false, true);
         ColorSetting* colorSetting = lastColorSetting;
-        // Display the color picker in the bottom middle of the screen
         ImGui::SetNextWindowPos(ImVec2(screen.x / 2 - 200, screen.y / 2));
         ImGui::SetNextWindowSize(ImVec2(400, 400));
-
-        ImGui::Begin("Color Picker", &displayColorPicker, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
+        ImGui::Begin("Color Picker", &displayColorPicker,
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar);
         {
             ImVec4 color = colorSetting->getAsImColor().Value;
-            ImGui::ColorPicker4("Color", colorSetting->mValue, ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
-            ImGui::Button("Close");
-            if (ImGui::IsItemClicked())
+            ImGui::ColorPicker4("Color", colorSetting->mValue,
+                ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha);
+            if (ImGui::Button("Close"))
             {
-                // Set the color setting to the new color
                 colorSetting->setFromImColor(ImColor(color));
                 displayColorPicker = false;
             }
         }
         ImGui::End();
         ImGui::PopFont();
-
-        if (ImGui::IsMouseClicked(0) && !ImRenderUtils::isMouseOver(ImVec4(screen.x / 2 - 200, screen.y / 2, screen.x / 2 + 200, screen.y / 2 + 400)))
+        if (ImGui::IsMouseClicked(0) && !ImRenderUtils::isMouseOver(
+            ImVec4(screen.x / 2 - 200, screen.y / 2, screen.x / 2 + 200, screen.y / 2 + 400)))
         {
             displayColorPicker = false;
         }
     }
+    if (!isEnabled)
+        displayColorPicker = false;
 
-    if (!isEnabled) displayColorPicker = false;
-
-    if (catPositions.empty() && isEnabled)
-    {
+    // Initialize category positions if not already done.
+    if (catPositions.empty() && isEnabled) {
         float centerX = screen.x / 2.f;
         float xPos = centerX - (categories.size() * (catWidth + catGap) / 2);
-        for (std::string& category : categories)
-        {
+        for (const std::string& cat : categories) {
             CategoryPosition pos;
-            pos.x = xPos;
-            pos.y = catGap * 2;
-            pos.x = std::round(pos.x / 2) * 2;
-            pos.y = std::round(pos.y / 2) * 2;
-            xPos += catWidth + catGap;
+            pos.x = std::round(xPos / 2.f) * 2.f;
+            pos.y = std::round((catGap * 2.f) / 2.f) * 2.f;
             catPositions.push_back(pos);
+            xPos += catWidth + catGap;
         }
     }
-
     if (!catPositions.empty())
     {
         for (size_t i = 0; i < categories.size(); i++)
@@ -307,491 +276,151 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                             switch (setting->mType)
 
                             {
-                            case SettingType::Bool:
-                                {
-                                    BoolSetting* boolSetting = reinterpret_cast<BoolSetting*>(setting);
-                                    moduleY = MathUtils::lerp(moduleY, moduleY + modHeight, mod->cAnim);
+                            case SettingType::Bool: {
+                                BoolSetting* boolSetting = reinterpret_cast<BoolSetting*>(setting);
+                                // Assume 'lowercase' is already determined.
+                                // Pass catPositions[i].y as catY, and catHeight, modRect, etc., accordingly.
+                                BoolSettingRenderer::render(
+                                    boolSetting,
+                                    modRect,
+                                    catPositions[i].y,          // catY
+                                    catHeight,
+                                    moduleY,
+                                    setPadding,
+                                    modHeight,
+                                    animation,
+                                    inScale,
+                                    screen.y / 2,
+                                    textHeight,
+                                    textSize,
+                                    isEnabled,
+                                    catPositions[i].isExtended,
+                                    tooltip,
+                                    displayColorPicker,
+                                    radius,
+                                    mod->cAnim,                 // module animation factor
+                                    /* indicatorColor */ ColorUtils::getThemedColor(modRect.y), // or another suitable themed color
+                                    lastBoolSetting,
+                                    isBoolSettingBinding
+                                );
+                                break;
+                            }
 
-                                    ImVec4 rect = ImVec4(
-                                            modRect.x, catPositions[i].y + catHeight + moduleY + setPadding, modRect.z,
-                                            catPositions[i].y + catHeight + moduleY + modHeight)
-                                        .scaleToPoint(
-                                            ImVec4(modRect.x, screen.y / 2,
-                                                           modRect.z, screen.y / 2),
-                                            inScale);
-                                    rect.y = std::floor(rect.y);
-                                    // Clamp rect start Y to top of the modRect
-                                    if (rect.y < modRect.y)
-                                    {
-                                        rect.y = modRect.y;
-                                    }
-
-                                    if (rect.y > catRect.y + 0.5f)
-                                    {
-                                        std::string setName = lowercase ? StringUtils::toLower(setting->mName) : setting->mName;
-                                        ImRenderUtils::fillRectangle(rect, ImColor(30, 30, 30), animation, radius, ImGui::GetBackgroundDrawList(), ImDrawFlags_RoundCornersBottom);
-
-                                        if (ImRenderUtils::isMouseOver(rect) && isEnabled && catPositions[i].isExtended)
-                                        {
-                                            tooltip = setting->mDescription;
-                                            if (ImGui::IsMouseClicked(0) && !displayColorPicker && mod->showSettings)
-                                            {
-                                                //*(bool*)setting->getValue() = !*(bool*)setting->getValue();
-                                                boolSetting->mValue = !boolSetting->mValue;
-                                            }
-
-                                            if (ImGui::IsMouseClicked(2) && !displayColorPicker && catPositions[i].isExtended)
-                                            {
-                                                lastBoolSetting = boolSetting;
-                                                isBoolSettingBinding = true;
-                                                ClientInstance::get()->playUi("random.pop", 0.75f, 1.0f);
-                                            }
-                                        }
-
-                                        setting->boolScale = MathUtils::animate(
-                                            boolSetting->mValue ? 1 : 0, setting->boolScale,
-                                            ImRenderUtils::getDeltaTime() * 10);
-
-                                        float scaledWidth = rect.getWidth();
-                                        float scaledHeight = rect.getHeight();
-
-                                        ImVec2 center = ImVec2(rect.x + rect.getWidth() / 2.f, rect.y + rect.getHeight() / 2.f);
-                                        ImVec4 scaledRect = ImVec4(center.x - scaledWidth / 2.f, center.y - scaledHeight / 2.f, center.x + scaledWidth / 2.f, center.y + scaledHeight / 2.f);
-
-                                        float cSetRectCentreX = rect.x + ((rect.z - rect.x) - ImRenderUtils::getTextWidth(&setName, textSize)) / 2;
-                                        float cSetRectCentreY = rect.y + ((rect.w - rect.y) - textHeight) / 2;
-
-                                        ImVec4 smoothScaledRect = ImVec4(scaledRect.z - 19, scaledRect.y + 5, scaledRect.z - 5, scaledRect.w - 5);//
-                                        ImVec2 circleRect = ImVec2(smoothScaledRect.getCenter().x, smoothScaledRect.getCenter().y);
-
-                                        // Lerp shadow color using boolScale
-                                        ImColor targetShadowCol = ImColor(15, 15, 15);
-                                        ImColor shadowCol = MathUtils::lerpImColor(targetShadowCol, rgb, setting->boolScale);
-
-                                        ImRenderUtils::fillShadowCircle(circleRect, 5, shadowCol, animation * mod->cAnim, 40, 0);
-
-                                        ImVec4 booleanRect = ImVec4(rect.z - 23.5f, cSetRectCentreY - 2.5f, rect.z - 5, cSetRectCentreY + 17.5f);
-                                        booleanRect = booleanRect.scaleToPoint(ImVec4(rect.z, rect.y, rect.z, rect.w), animation);
-
-                                        float rectXDiff = booleanRect.z - booleanRect.x;
-
-                                        if (setting->boolScale > 0.01) {
-                                            // Make the min y of the boolean rect the top of the setting rect
-                                            if (booleanRect.y < modRect.w) {
-                                                booleanRect.y = modRect.w;
-                                            }
-                                            ImGui::GetForegroundDrawList()->PushClipRect(ImVec2(booleanRect.x, booleanRect.y), ImVec2(booleanRect.x + rectXDiff * setting->boolScale, booleanRect.w), true);
-
-                                            ImRenderUtils::drawCheckMark(ImVec2(booleanRect.getCenter().x - (4 * animation),
-                                                                                booleanRect.getCenter().y - (1 * animation)), 1.3 * animation,
-                                                                         rgb, mod->cAnim * animation);
-                                            ImRenderUtils::drawCheckMark(ImVec2(booleanRect.getCenter().x - (4 * animation),
-                                                                                booleanRect.getCenter().y - (1 * animation)), 1.3 * animation,
-                                                                         rgb, mod->cAnim * animation);
-
-                                            ImGui::GetForegroundDrawList()->PopClipRect();
-                                        }
-
-                                        ImRenderUtils::drawText(ImVec2(rect.x + 5.f, cSetRectCentreY), setName,
-                                                               ImColor(255, 255, 255), textSize, animation, true);
-                                    }
-                                    break;
-                                }
                             case SettingType::Keybind:
                             {
-                                // Retrieve the keybind setting; we still use it for label and binding state,
-                                // but the displayed key is taken from mod->mKey.
                                 KeybindSetting* keybindSetting = reinterpret_cast<KeybindSetting*>(setting);
-                                moduleY = MathUtils::lerp(moduleY, moduleY + modHeight, mod->cAnim);
-
-                                // Compute the overall rectangle for the keybind setting row.
-                                ImVec4 rect = ImVec4(
-                                    modRect.x, catPositions[i].y + catHeight + moduleY + setPadding,
-                                    modRect.z, catPositions[i].y + catHeight + moduleY + modHeight)
-                                    .scaleToPoint(ImVec4(modRect.x, screen.y / 2, modRect.z, screen.y / 2), inScale);
-                                rect.y = std::floor(rect.y);
-                                if (rect.y < modRect.y) {
-                                    rect.y = modRect.y;
-                                }
-
-                                // Define padding and calculate the square key box (on the right side).
-                                float padding = 5.f;
-                                float keyBoxSize = modHeight - 4; // square box size
-                                ImVec4 keyBoxRect = ImVec4(
-                                    rect.z - keyBoxSize - padding,    // x: right side minus box width and padding
-                                    rect.y + (modHeight - keyBoxSize) / 2,  // y: vertically centered
-                                    rect.z - padding,                   // z: right side minus padding
-                                    rect.y + (modHeight - keyBoxSize) / 2 + keyBoxSize // w: y + box size
+                                KeybindSettingRenderer::render(
+                                    keybindSetting,
+                                    modRect,
+                                    catPositions[i].y,          // catY
+                                    catHeight,
+                                    moduleY,
+                                    setPadding,
+                                    modHeight,
+                                    animation,
+                                    inScale,
+                                    screen.y / 2,
+                                    textHeight,
+                                    textSize,
+                                    isEnabled,
+                                    lastKeybindSetting,
+                                    isKeybindBinding,
+                                    tooltip,
+                                    radius,
+                                    mod->mKey                   // use the module's key
                                 );
-
-                                // Render the background for the full setting row.
-                                ImRenderUtils::fillRectangle(rect, ImColor(30, 30, 30), animation, radius,
-                                    ImGui::GetBackgroundDrawList(), ImDrawFlags_RoundCornersBottom);
-
-                                // Draw the setting label on the left.
-                                ImRenderUtils::drawText(ImVec2(rect.x + padding, rect.y + (modHeight - textHeight) / 2),
-                                    keybindSetting->mName, ImColor(255, 255, 255),
-                                    textSize, animation, true);
-
-                                // Determine what to display in the key box.
-                                std::string keyText;
-                                if (isKeybindBinding && lastKeybindSetting == keybindSetting) {
-                                    // When binding mode is active for this setting, animate dots.
-                                    const char* states[3] = { ".", "..", "..." };
-                                    int index = static_cast<int>(ImGui::GetTime() * 2) % 3;
-                                    keyText = states[index];
-                                }
-                                else {
-                                    // Otherwise, display the module's bound key.
-                                    keyText = Keyboard::getKey(mod->mKey);
-                                    if (mod->mKey == 0) {
-                                        keyText = "None";
-                                    }
-                                }
-
-                                // Render the key box with a dark background and rounded corners.
-                                ImRenderUtils::fillRectangle(keyBoxRect, ImColor(29, 29, 29), animation, 4,
-                                    ImGui::GetBackgroundDrawList(), ImDrawFlags_RoundCornersAll);
-
-                                // Center the key text within the key box.
-                                float keyTextWidth = ImRenderUtils::getTextWidth(&keyText, textSize);
-                                float keyTextX = keyBoxRect.x + ((keyBoxRect.z - keyBoxRect.x) - keyTextWidth) / 2;
-                                float keyTextY = keyBoxRect.y + ((keyBoxRect.w - keyBoxRect.y) - textHeight) / 2;
-                                ImRenderUtils::drawText(ImVec2(keyTextX, keyTextY), keyText, ImColor(255, 255, 255),
-                                    textSize, animation, true);
-
-                                // If the mouse is over the key box and the user clicks (left or right click),
-                                // enter binding mode.
-                                if (ImRenderUtils::isMouseOver(keyBoxRect) && isEnabled && catPositions[i].isExtended) {
-                                    tooltip = keybindSetting->mDescription;
-                                    if ((ImGui::IsMouseClicked(0) || ImGui::IsMouseClicked(2))
-                                        && !displayColorPicker && mod->showSettings) {
-                                        lastKeybindSetting = keybindSetting;
-                                        isKeybindBinding = true;
-                                        ClientInstance::get()->playUi("random.pop", 0.75f, 1.0f);
-                                    }
-                                }
                                 break;
                             }
 
                             case SettingType::Enum:
-                                {
-                                    EnumSetting* enumSetting = reinterpret_cast<EnumSetting*>(setting);
-                                    std::string setName = lowercase ? StringUtils::toLower(setting->mName) : setting->mName;
-                                    std::vector<std::string> enumValues = enumSetting->mValues;
-                                    if (lowercase)
-                                    {
-                                        for (std::string& value : enumValues)
-                                        {
-                                            value = StringUtils::toLower(value);
-                                        }
-                                    }
-                                    int* iterator = &enumSetting->mValue;
-                                    int numValues = static_cast<int>(enumValues.size());
+                            {
+                                EnumSetting* enumSetting = reinterpret_cast<EnumSetting*>(setting);
+                                EnumSettingRenderer::render(
+                                    enumSetting,
+                                    modRect,
+                                    catRect,
+                                    catPositions[i].y,          // catY
+                                    catHeight,
+                                    moduleY,
+                                    setPadding,
+                                    modHeight,
+                                    animation,
+                                    inScale,
+                                    screen.y / 2,
+                                    textHeight,
+                                    textSize,
+                                    isEnabled,
+                                    lowercase,
+                                    mod->cAnim,                 // module animation factor
+                                    tooltip,
+                                    radius,
+                                    displayColorPicker,
+                                    mod->showSettings
+                                );
+                                break;
+                            }
 
-                                    moduleY = MathUtils::lerp(moduleY, moduleY + modHeight, mod->cAnim);
-
-                                    ImVec4 rect = ImVec4(
-                                            modRect.x, catPositions[i].y + catHeight + moduleY + setPadding, modRect.z,
-                                            catPositions[i].y + catHeight + moduleY + modHeight)
-                                        .scaleToPoint(
-                                            ImVec4(modRect.x, screen.y / 2,
-                                                           modRect.z, screen.y / 2),
-                                            inScale);
-                                    rect.y = std::floor(rect.y);
-                                    if (rect.y < modRect.y)
-                                    {
-                                        rect.y = modRect.y;
-                                    }
-
-                                    float targetAnim = setting->enumExtended && mod->showSettings ? 1.f : 0.f;
-                                    setting->enumSlide = MathUtils::animate(
-                                        targetAnim, setting->enumSlide, ImRenderUtils::getDeltaTime() * 10);
-                                    setting->enumSlide = MathUtils::clamp(setting->enumSlide, 0.f, 1.f);
-
-                                    if (setting->enumSlide > 0.001)
-                                    {
-                                        for (int j = 0; j < numValues; j++)
-                                        {
-                                            std::string enumValue = enumValues[j];
-
-                                            moduleY = MathUtils::lerp(moduleY, moduleY + modHeight, setting->enumSlide);
-
-                                            ImVec4 rect2 = ImVec4(
-                                                    modRect.x, catPositions[i].y + catHeight + moduleY + setPadding, modRect.z,
-                                                    catPositions[i].y + catHeight + moduleY + modHeight)
-                                                .scaleToPoint(
-                                                    ImVec4(modRect.x, screen.y / 2,
-                                                                   modRect.z, screen.y / 2),
-                                                    inScale);
-
-                                            if (rect2.y > catRect.y + 0.5f)
-                                            {
-                                                float cSetRectCentreY = rect2.y + ((rect2.w - rect2.y) - textHeight)
-                                                    / 2;
-
-                                                ImRenderUtils::fillRectangle(rect2, ImColor(20, 20, 20), animation, radius, ImGui::GetBackgroundDrawList(), ImDrawFlags_RoundCornersBottom);
-
-                                                if (*iterator == j)
-                                                    ImRenderUtils::fillRectangle(
-                                                        ImVec4(rect2.x, rect2.y, rect2.x + 1.5f, rect2.w),
-                                                        rgb, animation);
-
-                                                if (ImRenderUtils::isMouseOver(rect2) && ImGui::IsMouseClicked(0) &&
-                                                    isEnabled && !displayColorPicker && mod->showSettings)
-                                                {
-                                                    *iterator = j;
-                                                }
-
-                                                ImRenderUtils::drawText(
-                                                    ImVec2(rect2.x + 5.f, cSetRectCentreY), enumValue,
-                                                    ImColor(255, 255, 255), textSize, animation, true);
-                                            }
-                                        }
-                                    }
-
-                                    if (rect.y > catRect.y + 0.5f)
-                                    {
-                                        ImRenderUtils::fillRectangle(rect, ImColor(30, 30, 30), animation, radius, ImGui::GetBackgroundDrawList(), ImDrawFlags_RoundCornersBottom);
-
-                                        if (ImRenderUtils::isMouseOver(rect) && isEnabled && catPositions[i].isExtended)
-                                        {
-                                            tooltip = setting->mDescription;
-                                            if (ImGui::IsMouseClicked(0) && !displayColorPicker && mod->showSettings)
-                                            {
-                                                *iterator = (*iterator + 1) % enumValues.size();
-                                            }
-                                            else if (ImGui::IsMouseClicked(1) && mod->showSettings && !displayColorPicker && mod->showSettings)
-                                            {
-                                                setting->enumExtended = !setting->enumExtended;
-                                            }
-                                        }
-
-                                        float cSetRectCentreY = rect.y + ((rect.w - rect.y) - textHeight) / 2;
-
-                                        std::string enumValue = enumValues[*iterator];
-                                        std::string settingName = setName;
-                                        std::string settingString = enumValue;
-                                        auto ValueLen = ImRenderUtils::getTextWidth(&settingString, textSize);
-
-                                        ImRenderUtils::drawText(ImVec2(rect.x + 5.f, cSetRectCentreY),
-                                                               settingName, ImColor(255, 255, 255), textSize,
-                                                               animation, true);
-                                        ImRenderUtils::drawText(
-                                            ImVec2((rect.z - 5.f) - ValueLen, cSetRectCentreY),
-                                            settingString, ImColor(170, 170, 170), textSize, animation, true);
-                                    }
-                                    if (rect.y > catRect.y - modHeight)
-                                    {
-                                        ImRenderUtils::fillGradientOpaqueRectangle(
-                                            ImVec4(rect.x, rect.w, rect.z,
-                                                           rect.w + 10.f * setting->enumSlide * animation),
-                                            ImColor(0, 0, 0), ImColor(0, 0, 0), 0.F * animation, 0.55F * animation);
-                                    }
-                                    break;
-                                }
                             case SettingType::Number:
-                                {
-                                    NumberSetting* numSetting = reinterpret_cast<NumberSetting*>(setting);
-                                    const float value = numSetting->mValue;
-                                    const float min = numSetting->mMin;
-                                    const float max = numSetting->mMax;
-
-                                    char str[10];
-                                    sprintf_s(str, 10, "%.2f", value);
-                                    std::string rVal = str;
-
-                                    std::string setName = lowercase ? StringUtils::toLower(setting->mName) : setting->mName;
-                                    std::string valueName = rVal;
-
-                                    moduleY = MathUtils::lerp(moduleY, moduleY + modHeight, mod->cAnim);
-
-                                    ImVec4 backGroundRect = ImVec4(
-                                            modRect.x, (catPositions[i].y + catHeight + moduleY), modRect.z,
-                                            catPositions[i].y + catHeight + moduleY + modHeight)
-                                        .scaleToPoint(
-                                            ImVec4(modRect.x, screen.y / 2,
-                                                           modRect.z, screen.y / 2),
-                                            inScale);
-
-                                    backGroundRect.y = std::floor(backGroundRect.y);
-                                    if (backGroundRect.y < modRect.y)
-                                    {
-                                        backGroundRect.y = modRect.y;
-                                    }
-
-                                    ImVec4 rect = ImVec4(
-                                            modRect.x + 7, (catPositions[i].y + catHeight + moduleY + setPadding), modRect.z - 7,
-                                            catPositions[i].y + catHeight + moduleY + modHeight)
-                                        .scaleToPoint(
-                                            ImVec4(modRect.x, screen.y / 2,
-                                                           modRect.z, screen.y / 2),
-                                            inScale);
-                                    rect.y = std::floor(rect.y);
-                                    if (rect.y < modRect.y)
-                                    {
-                                        rect.y = modRect.y;
-                                    }
-
-                                    static float clickAnimation = 1.f;
-
-                                    // If left click is down, lerp the alpha to 0.60f;
-                                    if (ImGui::IsMouseDown(0) && ImRenderUtils::isMouseOver(rect))
-                                    {
-                                        clickAnimation = MathUtils::animate(0.60f, clickAnimation, ImRenderUtils::getDeltaTime() * 10);
-                                    }
-                                    else
-                                    {
-                                        clickAnimation = MathUtils::animate(1.f, clickAnimation, ImRenderUtils::getDeltaTime() * 10);
-                                    }
-
-                                    if (backGroundRect.y > catRect.y + 0.5f)
-                                    {
-                                        ImRenderUtils::fillRectangle(backGroundRect, ImColor(30, 30, 30), animation, radius, ImGui::GetBackgroundDrawList(), ImDrawFlags_RoundCornersBottom);
-
-                                        const float sliderPos = (value - min) / (max - min) * (rect.z - rect.x);
-
-                                        setting->sliderEase = MathUtils::animate(
-                                            sliderPos, setting->sliderEase, ImRenderUtils::getDeltaTime() * 10);
-                                        setting->sliderEase = std::clamp(setting->sliderEase, 0.f, rect.getWidth());
-
-#pragma region Slider dragging
-                                       if (ImRenderUtils::isMouseOver(rect) && isEnabled && catPositions[i].isExtended)
-                                        {
-                                            tooltip = setting->mDescription;
-                                            if (ImGui::IsMouseDown(0) || ImGui::IsMouseDown(2))
-                                            {
-                                                setting->isDragging = true;
-                                                lastDraggedSetting = setting;
-                                            }
-                                        }
-
-                                        if (ImGui::IsMouseDown(0) && setting->isDragging && isEnabled)
-                                        {
-                                            if (lastDraggedSetting != setting)
-                                            {
-                                                setting->isDragging = false;
-                                            } else
-                                            {
-                                                const float newValue = std::fmax(
-                                                    std::fmin(
-                                                        (ImRenderUtils::getMousePos().x - rect.x) / (rect.z - rect.x) * (
-                                                            max - min) + min, max), min);
-                                                numSetting->setValue(newValue);
-                                            }
-                                        }
-                                        else if (ImGui::IsMouseDown(2) && setting->isDragging && isEnabled)
-                                        {
-                                            if (lastDraggedSetting != setting)
-                                            {
-                                                setting->isDragging = false;
-                                            } else
-                                            {
-                                                float newValue = std::fmax(
-                                                    std::fmin(
-                                                        (ImRenderUtils::getMousePos().x - rect.x) / (rect.z - rect.x) * (
-                                                            max - min) + min, max), min);
-                                                // Round the value to the nearest value specified by midclickRounding
-                                                newValue = std::round(newValue / midclickRounding) * midclickRounding;
-                                                numSetting->mValue = newValue;
-                                            }
-                                        }
-                                        else
-                                        {
-                                            setting->isDragging = false;
-                                        }
-#pragma endregion
-
-                                        // "doesn't animate down when animating out" cuz its made by a 11 yr old smart nerd :yum:
-                                        /* Original code (doesn't animate down when animating out)
-                                        ImRenderUtils::fillRectangle(ImVec4(rect.x, (catPositions[i].y + catHeight + moduleY + modHeight) - 3, rect.x + setting->sliderEase, rect.w), rgb, animation);
-                                        ImRenderUtils::fillShadowRectangle(ImVec4(rect.x, (catPositions[i].y + catHeight + moduleY + modHeight) - 3, rect.x + setting->sliderEase, rect.w), rgb, animation, 50.f, 0);*/
-
-                                        float ySize = rect.w - rect.y;
-
-                                        ImVec2 sliderBarMin = ImVec2(rect.x, rect.w - ySize / 8);
-                                        ImVec2 sliderBarMax = ImVec2(rect.x + (setting->sliderEase * inScale), rect.w);
-                                        sliderBarMin.y = sliderBarMax.y - 4 * inScale;
-
-                                        ImVec4 sliderRect = ImVec4(sliderBarMin.x, sliderBarMin.y - 4.5f, sliderBarMax.x, sliderBarMax.y - 6.5f);
-
-                                        // The slider bar
-                                        ImRenderUtils::fillRectangle(sliderRect, rgb, animation, 15);
-
-                                        // Circle (I am not sure)
-                                        ImVec2 circlePos = ImVec2(sliderRect.z - 2.25f, sliderRect.getCenter().y);
-
-                                        if (value <= min + 0.83f)
-                                        {
-                                            circlePos.x = sliderRect.z + 2.25f;
-                                        }
+                            {
+                                NumberSetting* numSetting = reinterpret_cast<NumberSetting*>(setting);
+                                NumberSettingRenderer::render(
+                                    numSetting,
+                                    modRect,
+                                    catRect,
+                                    catPositions[i].y + catHeight,  // baseY
+                                    modHeight,
+                                    setPadding,
+                                    animation,
+                                    inScale,
+                                    screen.y / 2,
+                                    textHeight,
+                                    textSize,
+                                    isEnabled,
+                                    lowercase,
+                                    mod->cAnim,   // module animation factor
+                                    moduleY,
+                                    midclickRounding,
+                                    mod->showSettings,
+                                    catPositions[i].isExtended,
+                                    tooltip,
+                                    radius,
+                                    lastDraggedSetting
+                                );
+                                break;
+                            }
 
 
-                                        ImRenderUtils::fillCircle(circlePos, 5.5f * clickAnimation * animation, rgb, animation, 12);
-
-                                        // Push a clip rect to prevent the shadow from going outside the slider bar
-                                        ImGui::GetBackgroundDrawList()->PushClipRect(ImVec2(sliderRect.x, sliderRect.y), ImVec2(sliderRect.z, sliderRect.w), true);
-
-                                        ImRenderUtils::fillShadowRectangle(sliderRect, rgb, animation * 0.75f, 15.f, 0);
-
-                                        ImGui::GetBackgroundDrawList()->PopClipRect();
-
-                                        auto ValueLen = ImRenderUtils::getTextWidth(&valueName, textSize);
-                                        ImRenderUtils::drawText(
-                                            ImVec2((backGroundRect.z - 5.f) - ValueLen, backGroundRect.y + 2.5f), valueName,
-                                            ImColor(170, 170, 170), textSize, animation, true);
-                                        ImRenderUtils::drawText(ImVec2(backGroundRect.x + 5.f, backGroundRect.y + 2.5f),
-                                                               setName, ImColor(255, 255, 255), textSize,
-                                                               animation, true);
-                                    }
-                                    break;
-                                }
                             case SettingType::Color:
-                                {
-                                    ColorSetting* colorSetting = reinterpret_cast<ColorSetting*>(setting);
-                                    ImColor color = colorSetting->getAsImColor();
-                                    ImVec4 rgb = color.Value;
-                                    std::string setName = lowercase ? StringUtils::toLower(setting->mName) : setting->mName;
+                            {
+                                // Assume you have local variables for the parameters.
+                                // For example, 'moduleY' is a float holding the current module offset,
+                                // 'baseY' is computed from catPositions[i].y + catHeight, etc.
+                                ColorSetting* colorSetting = reinterpret_cast<ColorSetting*>(setting);
+                                ColorSettingRenderer::render(
+                                    colorSetting,
+                                    modRect,
+                                    catRect,
+                                    catPositions[i].y + catHeight, // baseY
+                                    modHeight,
+                                    setPadding,
+                                    animation,
+                                    inScale,
+                                    screen.y / 2,
+                                    textHeight,
+                                    textSize,
+                                    isEnabled,
+                                    lowercase,
+                                    mod->cAnim,   // module animation factor
+                                    moduleY,
+                                    mod->showSettings,
+                                    catPositions[i].isExtended,
+                                    tooltip,
+                                    displayColorPicker,
+                                    lastColorSetting
+                                );
+                                break;
+                            }
 
-                                    moduleY = MathUtils::lerp(moduleY, moduleY + modHeight, mod->cAnim);
-
-                                    ImVec4 rect = ImVec4(
-                                            modRect.x, catPositions[i].y + catHeight + moduleY + setPadding, modRect.z,
-                                            catPositions[i].y + catHeight + moduleY + modHeight)
-                                        .scaleToPoint(
-                                            ImVec4(modRect.x, screen.y / 2,
-                                                           modRect.z, screen.y / 2),
-                                            inScale);
-                                    rect.y = std::floor(rect.y);
-                                    if (rect.y < modRect.y)
-                                    {
-                                        rect.y = modRect.y;
-                                    }
-
-                                    if (rect.y > catRect.y + 0.5f)
-                                    {
-                                        ImRenderUtils::fillRectangle(rect, ImColor(30, 30, 30), animation);
-
-                                        if (ImRenderUtils::isMouseOver(rect) && isEnabled && catPositions[i].isExtended)
-                                        {
-                                            tooltip = setting->mDescription;
-                                            if (ImGui::IsMouseClicked(0) && !displayColorPicker && mod->showSettings)
-                                            {
-                                                displayColorPicker = !displayColorPicker;
-                                                lastColorSetting = colorSetting;
-                                            }
-                                        }
-
-                                        float cSetRectCentreY = rect.y + ((rect.w - rect.y) - textHeight) / 2;
-                                        ImRenderUtils::drawText(ImVec2(rect.x + 5.f, cSetRectCentreY), setName,
-                                                               ImColor(255, 255, 255), textSize, animation, true);
-
-                                        ImVec2 colorRect = ImVec2(rect.z - 20, rect.y + 5);
-                                        ImRenderUtils::fillRectangle(ImVec4(rect.z - 20, rect.y + 5, rect.z - 5, rect.w - 5),
-                                                                     colorSetting->getAsImColor(), animation);
-                                    }
-                                    break;
-                                }
                             }
 
                             sIndex++;
@@ -800,112 +429,78 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                     }
 
 
-                    if (modRect.y > catRect.y + 0.5f)
-                    {
-                        // Draw the rect
-                        if (mod->cScale <= 1)
-                        {
+                    if (modRect.y > catRect.y + 0.5f) {
+                        // --- Draw Module Background ---
+                        if (mod->cScale <= 1) {
+                            // Draw different backgrounds based on module state.
                             if (mod->mEnabled)
-                                ImRenderUtils::fillRectangle(modRect, rgb, animation, radius, ImGui::GetBackgroundDrawList(), ImDrawCornerFlags_BotRight | ImDrawCornerFlags_BotLeft);
+                                ImRenderUtils::fillRectangle(modRect, rgb, animation, radius,
+                                    ImGui::GetBackgroundDrawList(), ImDrawCornerFlags_BotRight | ImDrawCornerFlags_BotLeft);
                             else
-                                ImRenderUtils::fillRectangle(modRect, ImColor(30, 30, 30), animation, radius, ImGui::GetBackgroundDrawList(), ImDrawCornerFlags_BotRight | ImDrawCornerFlags_BotLeft);
-                            ImRenderUtils::fillRectangle(modRect, grayColor, animation, radius, ImGui::GetBackgroundDrawList(), ImDrawCornerFlags_BotRight | ImDrawCornerFlags_BotLeft);
+                                ImRenderUtils::fillRectangle(modRect, ImColor(30, 30, 30), animation, radius,
+                                    ImGui::GetBackgroundDrawList(), ImDrawCornerFlags_BotRight | ImDrawCornerFlags_BotLeft);
+                            // Overlay with gray for additional effect.
+                            ImRenderUtils::fillRectangle(modRect, grayColor, animation, radius,
+                                ImGui::GetBackgroundDrawList(), ImDrawCornerFlags_BotRight | ImDrawCornerFlags_BotLeft);
                         }
 
+                        // --- Animate and Render Module Name ---
                         std::string modName = mod->getName();
+                        // Calculate center of modRect.
+                        ImVec2 center(modRect.x + modRect.getWidth() / 2.f,
+                            modRect.y + modRect.getHeight() / 2.f);
 
-                        // Calculate the centre of the rect
-                        ImVec2 center = ImVec2(modRect.x + modRect.getWidth() / 2.f,
-                                                               modRect.y + modRect.getHeight() / 2.f);
+                        // Animate module scale (cScale).
+                        mod->cScale = MathUtils::animate(mod->mEnabled ? 1.f : 0.f, mod->cScale, ImRenderUtils::getDeltaTime() * 10);
 
-                        mod->cScale = MathUtils::animate(mod->mEnabled ? 1 : 0, mod->cScale,
-                                                    ImRenderUtils::getDeltaTime() * 10);
-
-                        // Calculate scaled size based on cScale
-                        float scaledWidth = modRect.getWidth();
-                        float scaledHeight = modRect.getHeight();
-
-                        // Calculate new rectangle based on scaled size and center point
-                        ImVec4 scaledRect = ImVec4(center.x - scaledWidth / 2.f,
-                                                                   center.y - scaledHeight / 2.f,
-                                                                   center.x + scaledWidth / 2.f,
-                                                                   center.y + scaledHeight / 2.f);
-
-                        // Interpolate between original rectangle and scaled rectangle
-                        if (mod->cScale > 0)
-                        {
-
-                            //ImRenderUtils::fillRectangle(scaledRect, rgb, animation * mod->cScale + 0.01f);
+                        // Create a scaled rectangle for a smooth scaling effect.
+                        ImVec4 scaledRect(center.x - modRect.getWidth() / 2.f,
+                            center.y - modRect.getHeight() / 2.f,
+                            center.x + modRect.getWidth() / 2.f,
+                            center.y + modRect.getHeight() / 2.f);
+                        if (mod->cScale > 0) {
                             ImColor rgb1 = rgb;
-                            float modIndexY = moduleY + (scaledRect.y - scaledRect.w);
-
-                            ImColor rgb2 = ColorUtils::getThemedColor(scaledRect.y + ((scaledRect.z - scaledRect.x)));
-                            //ImRenderUtils::fillGradientOpaqueRectangle(scaledRect, rgb1, rgb2, animation * mod->cScale, animation * mod->cScale);
-                            // Round only if we are rendering the last module and the settings aren't expanded
-                            //ImRenderUtils::fillRectangle(scaledRect, rgb1, animation * mod->cScale, radius, ImGui::GetBackgroundDrawList(), ImDrawFlags_RoundCornersBottom);
-                            ImRenderUtils::fillRoundedGradientRectangle(scaledRect, rgb1, rgb2, radius, animation * mod->cScale, animation * mod->cScale, flags);
+                            ImColor rgb2 = ColorUtils::getThemedColor(scaledRect.y + (scaledRect.z - scaledRect.x));
+                            // Render a rounded gradient rectangle based on the current scale.
+                            ImRenderUtils::fillRoundedGradientRectangle(scaledRect, rgb1, rgb2, radius,
+                                animation * mod->cScale, animation * mod->cScale, flags);
                         }
 
-                        float cRectCentreX = modRect.x + ((modRect.z - modRect.x) - ImRenderUtils::getTextWidth(
-                            &modName, textSize)) / 2;
+                        // Determine text position: center the module name in modRect.
+                        float textWidth = ImRenderUtils::getTextWidth(&modName, textSize);
+                        float cRectCentreX = modRect.x + ((modRect.z - modRect.x) - textWidth) / 2;
                         float cRectCentreY = modRect.y + ((modRect.w - modRect.y) - textHeight) / 2;
-
-                        // cRectCentreX. vRectCentreY
-                        //.lerp(ImVec2(modRect.x + 5, cRectCentreY), mod->cAnim) // if we want lerp to left on extend
-                        ImVec2 modPosLerped = ImVec2(cRectCentreX, cRectCentreY);
-
+                        ImVec2 modPosLerped(cRectCentreX, cRectCentreY);
                         ImRenderUtils::drawText(modPosLerped, modName,
-                                               ImColor(mod->mEnabled
-                                                           ? ImColor(255, 255, 255)
-                                                           : ImColor(180, 180, 180)).Lerp(
-                                                           mod->mEnabled
-                                                           ? ImColor(255, 255, 255)
-                                                           : ImColor(180, 180, 180), mod->cAnim), textSize, animation, true);
+                            mod->mEnabled ? ImColor(255, 255, 255) : ImColor(180, 180, 180),
+                            textSize, animation, true);
 
-                        /*std::string bindName = (mod == lastMod && ClickGUIManager::isBinding) ? "Binding..." : std::to_string((char)mod->getKeybind()).c_str();
-                        float bindNameLen = ImRenderUtils::getTextWidth(&bindName, textSize);
-                        ImVec4 bindRect = ImVec4((modRect.z - 10) - bindNameLen, modRect.y + 2.5, modRect.z - 2.5, modRect.w - 2.5);
-                        ImVec2 bindTextPos = ImVec2(bindRect.x + 3.5, cRectCentreY);
-
-                        if (mod->getKeybind() != 7) {
-                            ImRenderUtils::fillRectangle(bindRect, ImColor(29, 29, 29), 0.9, 4);
-                            ImRenderUtils::drawText(bindTextPos, &bindName, ImColor(255, 255, 255), textSize, animation, true);
-                        }
-                        else if (mod->getKeybind() == 7 && mod == lastMod && ClickGUIManager::isBinding) {
-                            ImRenderUtils::fillRectangle(bindRect, ImColor(29, 29, 29), 0.9, 4);
-                            ImRenderUtils::drawText(bindTextPos, &bindName, ImColor(255, 255, 255), textSize, animation, true);
-                        }*/
-
-                        //GuiData* guidata = Global::getClientInstance()->getGuiData();
-                        float renderx = screen.x / 2;
-                        float rendery = (screen.y / 2) + 110;
-
-                        if (ImRenderUtils::isMouseOver(modRect) && catPositions[i].isExtended && isEnabled && catPositions[i].isExtended)
-                        {
-                            if (ImRenderUtils::isMouseOver(catWindow) && catPositions[i].isExtended && catPositions[i].isExtended)
-                            {
+                        // --- Handle Mouse Interactions for Module Toggling ---
+                        if (ImRenderUtils::isMouseOver(modRect) && catPositions[i].isExtended && isEnabled) {
+                            // If mouse is also over the overall category window, show tooltip.
+                            if (ImRenderUtils::isMouseOver(catWindow))
                                 tooltip = mod->mDescription;
-                            }
-
-                            if (ImGui::IsMouseClicked(0) && !displayColorPicker && catPositions[i].isExtended)
-                            {
-                                if (!moduleToggled) mod->toggle();
+                            // Left-click toggles the module.
+                            if (ImGui::IsMouseClicked(0) && !displayColorPicker) {
+                                if (!moduleToggled)
+                                    mod->toggle();
                                 ClientInstance::get()->playUi("random.pop", 0.75f, 1.0f);
                                 moduleToggled = true;
                             }
-                            else if (ImGui::IsMouseClicked(1) && !displayColorPicker && catPositions[i].isExtended)
-                            {
-                                // Only show if the module has settings
-                                if (!mod->mSettings.empty()) mod->showSettings = !mod->showSettings;
+                            // Right-click toggles settings visibility.
+                            else if (ImGui::IsMouseClicked(1) && !displayColorPicker) {
+                                if (!mod->mSettings.empty())
+                                    mod->showSettings = !mod->showSettings;
                             }
-                            else if (ImGui::IsMouseClicked(2)  && !displayColorPicker && catPositions[i].isExtended)
-                            {
+                            // Middle-click initiates binding.
+                            else if (ImGui::IsMouseClicked(2) && !displayColorPicker) {
                                 lastMod = mod;
                                 isBinding = true;
                                 ClientInstance::get()->playUi("random.pop", 0.75f, 1.0f);
                             }
                         }
                     }
+
                     if (modRect.y > catRect.y - modHeight)
                     {
                         // Render a slight glow effect
@@ -920,151 +515,100 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                 }
             }
             drawList->PopClipRect();
-
-            if (isBinding)
-            {
-                tooltip = "Currently binding " + lastMod->getName() + "..." +" Press ESC to unbind.";
-                for (const auto& key : Keyboard::mPressedKeys)
-                {
-                    if (key.second && lastMod)
-                    {
-                        //lastMod->setKeybind(key.first == Keys::ESC ? 7 : key.first);
-                        lastMod->mKey = key.first == VK_ESCAPE ? 0 : key.first;
-                        isBinding = false;
-                        if (key.first == VK_ESCAPE)
-                        {
-                            ClientInstance::get()->playUi("random.break", 0.75f, 1.0f);
-                        } else
-                        {
-                            ClientInstance::get()->playUi("random.orb", 0.75f, 1.0f);
-                        }
-                    }
-                }
-            }
-            // Keybind setting binding: if a key is pressed while binding mode is active.
-            if (isKeybindBinding && lastKeybindSetting) {
-                tooltip = "Currently binding " + lastKeybindSetting->mName + "... Press ESC to cancel.";
+            auto processBinding = [&](auto* setting, bool& bindingFlag, const std::string& message) {
+                tooltip = message;
                 for (const auto& key : Keyboard::mPressedKeys) {
-                    if (key.second) {  // a key is pressed
-                        // Update the key for the keybind setting (and hence for the module display)
-                        lastKeybindSetting->mKey = (key.first == VK_ESCAPE ? 0 : key.first);
-                        isKeybindBinding = false;
-                        if (key.first == VK_ESCAPE) {
-                            ClientInstance::get()->playUi("random.break", 0.75f, 1.0f);
-                        }
-                        else {
-                            ClientInstance::get()->playUi("random.orb", 0.75f, 1.0f);
-                        }
+                    if (key.second && setting) {
+                        setting->mKey = (key.first == VK_ESCAPE ? 0 : key.first);
+                        bindingFlag = false;
+                        ClientInstance::get()->playUi((key.first == VK_ESCAPE) ? "random.break" : "random.orb", 0.75f, 1.0f);
+                        break; // Process first key press and exit.
                     }
                 }
+            };
+
+            if (isBinding && lastMod) {
+                processBinding(lastMod.get(), isBinding, "Currently binding " + lastMod->getName() + "... Press ESC to unbind.");
             }
-
-
-            if (isBoolSettingBinding)
-            {
-                tooltip = "Currently binding " + lastBoolSetting->mName + "... Press ESC to unbind.";
-                for (const auto& key : Keyboard::mPressedKeys)
-                {
-                    if (key.second && lastBoolSetting)
-                    {
-                        lastBoolSetting->mKey = (key.first == VK_ESCAPE) ? 0 : key.first;
-                        isBoolSettingBinding = false;
-
-                        if (key.first == VK_ESCAPE)
-                        {
-                            ClientInstance::get()->playUi("random.break", 0.75f, 1.0f);
-                        }
-                        else
-                        {
-                            ClientInstance::get()->playUi("random.orb", 0.75f, 1.0f);
-                        }
-                    }
-                }
+            if (isKeybindBinding && lastKeybindSetting) {
+                processBinding(lastKeybindSetting, isKeybindBinding, "Currently binding " + lastKeybindSetting->mName + "... Press ESC to cancel.");
             }
+            if (isBoolSettingBinding && lastBoolSetting) {
+                processBinding(lastBoolSetting, isBoolSettingBinding, "Currently binding " + lastBoolSetting->mName + "... Press ESC to unbind.");
+            }
+            // --- Category Header Rendering ---
 
+            // Convert the category name to lowercase if needed.
             std::string catName = lowercase ? StringUtils::toLower(categories[i]) : categories[i];
 
+            // Toggle category extension on right-click over the category rectangle.
             if (ImRenderUtils::isMouseOver(catRect) && ImGui::IsMouseClicked(1))
                 catPositions[i].isExtended = !catPositions[i].isExtended;
 
+            // Slightly widen the rectangle and fill with a dark background.
             catRect.w += 1.5f;
             ImRenderUtils::fillRectangle(catRect, darkBlack, animation, 15, ImGui::GetBackgroundDrawList(), ImDrawFlags_RoundCornersTop);
 
-            ImVec4 lineRect = ImVec4(catRect.x, catRect.w - 0.75f, catRect.z, catRect.w + 0.75f);
+            // Optionally, you could draw a line (gradient) beneath the header.
+            // ImVec4 lineRect(catRect.x, catRect.w - 0.75f, catRect.z, catRect.w + 0.75f);
+            // ImRenderUtils::fillGradientOpaqueRectangle(lineRect, rgb, ColorUtils::getThemedColor(catRect.y + (catRect.z - catRect.x)), animation, animation);
 
-            //ImRenderUtils::fillGradientOpaqueRectangle(lineRect, rgb, ColorUtils::getThemedColor(catRect.y + ((catRect.z - catRect.x))), animation, animation);
-
-
-
+            // --- Calculate Text Center ---
             FontHelper::pushPrefFont(true, true, true);
-            // Calculate the centre of the rect
-            float textHeight = ImGui::GetFont()->CalcTextSizeA(textSize * 18, FLT_MAX, -1, catName.c_str()).y;
-            float cRectCentreX = catRect.x + ((catRect.z - catRect.x) - ImRenderUtils::getTextWidth(
-                &catName, textSize * 1.15)) / 2;
-            float cRectCentreY = catRect.y + ((catRect.w - catRect.y) - textHeight) / 2;
+            float headerTextHeight = ImGui::GetFont()->CalcTextSizeA(textSize * 18, FLT_MAX, -1, catName.c_str()).y;
+            float centerX = catRect.x + ((catRect.z - catRect.x) - ImRenderUtils::getTextWidth(&catName, textSize * 1.15)) / 2;
+            float centerY = catRect.y + ((catRect.w - catRect.y) - headerTextHeight) / 2;
 
+            // --- Determine Icon for Category ---
             std::string IconStr = "B";
-            // TODO: please for the love of god make icon fkery like this into FontHelper.......
-            // (also don't forget to check for case u idiot!!!!!!!111!!!!1)
-            if (StringUtils::equalsIgnoreCase(catName, "Combat")) IconStr = "c";
+            if (StringUtils::equalsIgnoreCase(catName, "Combat"))     IconStr = "c";
             else if (StringUtils::equalsIgnoreCase(catName, "Movement")) IconStr = "f";
-            else if (StringUtils::equalsIgnoreCase(catName, "Visual")) IconStr = "d";
-            else if (StringUtils::equalsIgnoreCase(catName, "Player")) IconStr = "e";
-            else if (StringUtils::equalsIgnoreCase(catName, "Misc")) IconStr = "a";
+            else if (StringUtils::equalsIgnoreCase(catName, "Visual"))   IconStr = "d";
+            else if (StringUtils::equalsIgnoreCase(catName, "Player"))   IconStr = "e";
+            else if (StringUtils::equalsIgnoreCase(catName, "Misc"))     IconStr = "a";
 
-
+            // --- Render Icon and Category Name ---
             ImGui::PushFont(FontHelper::Fonts["tenacity_icons_large"]);
-            // Draw the icon
-            ImRenderUtils::drawText(ImVec2(catRect.x + 10, cRectCentreY), IconStr, ImColor(255, 255, 255),
-                                   textSize * 1.15, animation, true);
+            // Draw icon slightly inset.
+            ImRenderUtils::drawText(ImVec2(catRect.x + 10, centerY), IconStr, ImColor(255, 255, 255), textSize * 1.15, animation, true);
             ImGui::PopFont();
+            ImRenderUtils::drawText(ImVec2(centerX, centerY), catName, ImColor(255, 255, 255), textSize * 1.15, animation, true);
+            FontHelper::popPrefFont();  // Pop the header font.
 
-            // Draw the string
-            ImRenderUtils::drawText(ImVec2(cRectCentreX, cRectCentreY), catName, ImColor(255, 255, 255),
-                                   textSize * 1.15, animation, true);
-            ImGui::PopFont();
-
+            // --- Clamp Category Position to Screen Bounds ---
             catPositions[i].x = std::clamp(catPositions[i].x, 0.f, screen.x - catWidth);
             catPositions[i].y = std::clamp(catPositions[i].y, 0.f, screen.y - catHeight);
 
-#pragma region DraggingLogic
-            static bool dragging = false;
-            static ImVec2 dragOffset;
-            if (catPositions[i].isDragging)
+            // --- Handle Dragging of the Category Header ---
             {
-                if (ImGui::IsMouseDown(0))
-                {
-                    if (!dragging)
-                    {
-                        dragOffset = ImVec2(ImRenderUtils::getMousePos().x - catRect.x,
-                                                    ImRenderUtils::getMousePos().y - catRect.y);
-                        dragging = true;
+                static bool dragging = false;
+                static ImVec2 dragOffset;
+                if (catPositions[i].isDragging) {
+                    if (ImGui::IsMouseDown(0)) {
+                        if (!dragging) {
+                            dragOffset = ImVec2(ImRenderUtils::getMousePos().x - catRect.x,
+                                ImRenderUtils::getMousePos().y - catRect.y);
+                            dragging = true;
+                        }
+                        // Calculate new position based on mouse position and offset.
+                        ImVec2 newPos = ImRenderUtils::getMousePos() - dragOffset;
+                        // Clamp and round the position for smooth movement.
+                        newPos.x = std::round(std::clamp(newPos.x, 0.f, screen.x - catWidth) / 2) * 2;
+                        newPos.y = std::round(std::clamp(newPos.y, 0.f, screen.y - catHeight) / 2) * 2;
+                        catPositions[i].x = newPos.x;
+                        catPositions[i].y = newPos.y;
                     }
-                    ImVec2 newPosition = ImVec2(ImRenderUtils::getMousePos().x - dragOffset.x,
-                                                                ImRenderUtils::getMousePos().y - dragOffset.y);
-                    newPosition.x = std::clamp(newPosition.x, 0.f,
-                                               screen.x - catWidth);
-                    newPosition.y = std::clamp(newPosition.y, 0.f,
-                                               screen.y - catHeight);
-                    // Round the position to an even number
-                    newPosition.x = std::round(newPosition.x / 2) * 2;
-                    newPosition.y = std::round(newPosition.y / 2) * 2;
+                    else {
+                        catPositions[i].isDragging = false;
+                        dragging = false;
+                    }
+                }
+                else if (ImRenderUtils::isMouseOver(catRect) && ImGui::IsMouseClicked(0) && isEnabled) {
+                    catPositions[i].isDragging = true;
+                    dragOffset = ImRenderUtils::getMousePos() - ImVec2(catRect.x, catRect.y);
+                }
+            }
 
-                    catPositions[i].x = newPosition.x;
-                    catPositions[i].y = newPosition.y;
-                }
-                else
-                {
-                    catPositions[i].isDragging = false;
-                    dragging = false;
-                }
-            }
-            else if (ImRenderUtils::isMouseOver(catRect) && ImGui::IsMouseClicked(0) && isEnabled)
-            {
-                catPositions[i].isDragging = true;
-                dragOffset = ImVec2(ImRenderUtils::getMousePos().x - catRect.x,
-                                            ImRenderUtils::getMousePos().y - catRect.y);
-            }
 #pragma endregion
         }
 
@@ -1112,20 +656,21 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
             scrollDirection = 0;
         }
     }
-    // --- Begin Search Bar Section --- //
-
-    ImGuiIO& io = ImGui::GetIO();
+    // --- Begin Search Bar Section ---
     {
-        // Use the same ImGuiIO reference.
+        // Get ImGui IO once.
         ImGuiIO& io = ImGui::GetIO();
-        // If search mode is active, append all characters from the input queue.
+
+        // If search mode is active, process input characters.
         if (isSearching) {
             for (unsigned int c : io.InputQueueCharacters) {
-                // Only accept printable characters.
-                if (c >= 32 && c < 127)
-                    searchingModule.push_back((char)c);
+                // Append only printable characters.
+                if (c >= 32 && c < 127) {
+                    searchingModule.push_back(static_cast<char>(c));
+                }
             }
-            io.InputQueueCharacters.resize(0);
+            io.InputQueueCharacters.clear();
+
             // Handle backspace and delete keys.
             if (ImGui::IsKeyPressed(ImGuiKey_Backspace) && !searchingModule.empty()) {
                 searchingModule.pop_back();
@@ -1134,107 +679,114 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                 searchingModule.clear();
             }
         }
-    }
 
-    ImVec2 mousePos = ImRenderUtils::getMousePos();
+        // Get current mouse position.
+        ImVec2 mousePos = ImRenderUtils::getMousePos();
 
-    // Define the search region at the bottom of the screen.
-    ImVec4 searchRegion(screen.x / 2.f - 275.f, screen.y / 1.25f, screen.x / 2.f + 275.f, screen.y);
+        // Define the search region (bottom center of screen).
+        const float searchWidth = 400.f;
+        const float searchHeight = 40.f;
+        ImVec4 searchRegion(
+            screen.x / 2.f - 275.f,
+            screen.y / 1.25f,
+            screen.x / 2.f + 275.f,
+            screen.y
+        );
 
-    // Static state for the search bar.
-    static const float searchWidth = 400.f;
-    static const float searchHeight = 40.f;
-    static float searchDuration = 1.f;
-    static float closeDuration = 3.f;
-    // isSearching and searchingModule are declared as static variables above.
+        // Static state for search animations.
+        static float searchDuration = 1.f;
+        static float closeDuration = 3.f;
 
-    // Adjust search bar appearance based on mouse position.
-    if (mousePos.x >= searchRegion.x && mousePos.x <= searchRegion.z &&
-        mousePos.y >= searchRegion.y && mousePos.y <= searchRegion.w) {
-        searchDuration = MathUtils::lerp(1.f, searchDuration, io.DeltaTime * 10.f);
-        closeDuration = 3.f;
-    }
-    else {
-        if (!isSearching && searchingModule.empty()) {
+        // Adjust appearance based on mouse position.
+        if (mousePos.x >= searchRegion.x && mousePos.x <= searchRegion.z &&
+            mousePos.y >= searchRegion.y && mousePos.y <= searchRegion.w) {
+            searchDuration = MathUtils::lerp(1.f, searchDuration, io.DeltaTime * 10.f);
+            closeDuration = 3.f;
+        }
+        else if (!isSearching && searchingModule.empty()) {
             if (closeDuration < 0.f)
                 searchDuration = MathUtils::lerp(0.f, searchDuration, io.DeltaTime * 10.f);
             else
                 closeDuration -= io.DeltaTime;
         }
-    }
 
-    // Define the rectangle for the search bar (it slides vertically based on searchDuration).
-    ImVec4 searchRectPos(
-        screen.x / 2.f - searchWidth / 2.f,
-        screen.y - searchHeight / 2.f + 10.f - 50.f * searchDuration,
-        screen.x / 2.f + searchWidth / 2.f,
-        screen.y + searchHeight / 2.f + 10.f - 50.f * searchDuration
-    );
+        // Compute the search bar rectangle (slides vertically based on searchDuration).
+        ImVec4 searchRectPos(
+            screen.x / 2.f - searchWidth / 2.f,
+            screen.y - searchHeight / 2.f + 10.f - 50.f * searchDuration,
+            screen.x / 2.f + searchWidth / 2.f,
+            screen.y + searchHeight / 2.f + 10.f - 50.f * searchDuration
+        );
 
-    // Define the inner "type" area for the search text.
-    std::string searchPrompt = "Search ";
-    float promptWidth = ImRenderUtils::getTextWidth(&searchPrompt, textSize);
-    ImVec4 typeRectPos(
-        searchRectPos.x + 5.f,
-        searchRectPos.y + 5.f,
-        searchRectPos.z - promptWidth - 10.f,
-        searchRectPos.w - 5.f
-    );
+        // Compute the inner "type" area (reserve space for the prompt on the right).
+        std::string searchPrompt = "Search ";
+        float promptWidth = ImRenderUtils::getTextWidth(&searchPrompt, textSize);
+        ImVec4 typeRectPos(
+            searchRectPos.x + 5.f,
+            searchRectPos.y + 5.f,
+            searchRectPos.z - promptWidth - 10.f,
+            searchRectPos.w - 5.f
+        );
 
-    // If the mouse is inside the type area and left-click is pressed, activate search mode.
-    if (ModernGui::isMouseOver(typeRectPos) && ImGui::IsMouseClicked(0)) {
-        isSearching = true;
-        // Optionally clear the search text:
-        // searchingModule.clear();
-    }
-    if (!ModernGui::isMouseOver(typeRectPos)) {
-        isSearching = false;
-    }
+        // Activate search mode when the mouse clicks inside the type area.
+        if (ModernGui::isMouseOver(typeRectPos) && ImGui::IsMouseClicked(0))
+            isSearching = true;
+        else if (!ModernGui::isMouseOver(typeRectPos))
+            isSearching = false;
 
-    // Render the search bar background.
-    ImRenderUtils::fillRectangle(searchRectPos, ImColor(29, 29, 29), 1.0f, 7.5f, ImGui::GetBackgroundDrawList(), 0);
-    ImRenderUtils::fillRectangle(typeRectPos, ImColor(21, 21, 21), 1.0f, 7.5f, ImGui::GetBackgroundDrawList(), 0);
+        // Render search bar background.
+        ImRenderUtils::fillRectangle(searchRectPos, ImColor(29, 29, 29), 1.0f, 7.5f, ImGui::GetBackgroundDrawList(), 0);
+        ImRenderUtils::fillRectangle(typeRectPos, ImColor(21, 21, 21), 1.0f, 7.5f, ImGui::GetBackgroundDrawList(), 0);
 
-    // Draw the prompt text on the right side of the type area.
-    ImRenderUtils::drawText(ImVec2(typeRectPos.z + 5.f, typeRectPos.y),
-        searchPrompt, ImColor(255, 255, 255), textSize, 1.0f, false, 0, ImGui::GetForegroundDrawList());
+        // Draw the search prompt on the right side.
+        ImRenderUtils::drawText(
+            ImVec2(typeRectPos.z + 5.f, typeRectPos.y),
+            searchPrompt, ImColor(255, 255, 255), textSize, 1.0f, false, 0, ImGui::GetForegroundDrawList()
+        );
 
-    // Render the search text if any.
-    float currentTextWidth = ImRenderUtils::getTextWidth(&searchingModule, textSize);
-    if (!searchingModule.empty()) {
-        ImDrawList* d = ImGui::GetForegroundDrawList();
-        d->PushClipRect(ImVec2(typeRectPos.x + 5.f, typeRectPos.y), ImVec2(typeRectPos.z - 5.f, typeRectPos.w), true);
-        // If text is wider than the type area, shift it to the left.
-        ImVec2 typeTextPos(typeRectPos.x + 5.f, typeRectPos.y + 5.f);
-        if (typeRectPos.x + currentTextWidth > typeRectPos.z - 15.f) {
-            typeTextPos.x -= (typeRectPos.x + currentTextWidth) - (typeRectPos.z - 15.f);
+        // Render search text if present.
+        float currentTextWidth = ImRenderUtils::getTextWidth(&searchingModule, textSize);
+        if (!searchingModule.empty()) {
+            ImDrawList* d = ImGui::GetForegroundDrawList();
+            d->PushClipRect(ImVec2(typeRectPos.x + 5.f, typeRectPos.y), ImVec2(typeRectPos.z - 5.f, typeRectPos.w), true);
+            // Shift text to the left if it overflows.
+            ImVec2 typeTextPos(typeRectPos.x + 5.f, typeRectPos.y + 5.f);
+            if (typeRectPos.x + currentTextWidth > typeRectPos.z - 15.f) {
+                typeTextPos.x -= (typeRectPos.x + currentTextWidth) - (typeRectPos.z - 15.f);
+            }
+            ImRenderUtils::drawText(typeTextPos, searchingModule, ImColor(255, 255, 255), textSize, 1.0f, false, 0, d);
+            d->PopClipRect();
         }
-        ImRenderUtils::drawText(typeTextPos, searchingModule, ImColor(255, 255, 255), textSize, 1.0f, false, 0, d);
-        d->PopClipRect();
-    }
-    else if (!isSearching) {
-        ImRenderUtils::drawText(ImVec2(typeRectPos.x + 5.f, typeRectPos.y + 5.f),
-            "Search for Module :)", ImColor(125, 125, 125), textSize, 1.0f, false, 0, ImGui::GetForegroundDrawList());
-    }
+        else if (!isSearching) {
+            // Show placeholder text when no input.
+            ImRenderUtils::drawText(
+                ImVec2(typeRectPos.x + 5.f, typeRectPos.y + 5.f),
+                "Search for Module :)", ImColor(125, 125, 125), textSize, 1.0f, false, 0, ImGui::GetForegroundDrawList()
+            );
+        }
 
-    // (Optional) Draw a blinking caret (vertical bar) at the end of the text.
-    static float caretOpacity = 1.f;
-    static bool caretIncreasing = false;
-    if (!caretIncreasing) {
-        caretOpacity -= io.DeltaTime * 2.f;
-        if (caretOpacity < 0.f) { caretOpacity = 0.f; caretIncreasing = true; }
+        // Blinking caret animation.
+        static float caretOpacity = 1.f;
+        static bool caretIncreasing = false;
+        if (!caretIncreasing) {
+            caretOpacity -= io.DeltaTime * 2.f;
+            if (caretOpacity < 0.f) { caretOpacity = 0.f; caretIncreasing = true; }
+        }
+        else {
+            caretOpacity += io.DeltaTime * 2.f;
+            if (caretOpacity > 1.f) { caretOpacity = 1.f; caretIncreasing = false; }
+        }
+        ImVec2 caretPos(typeRectPos.x + 5.f + currentTextWidth, typeRectPos.y + 5.f);
+        ImRenderUtils::fillRectangle(
+            ImVec4(caretPos.x, caretPos.y, caretPos.x + 2.f, caretPos.y + textSize),
+            ImColor(255, 255, 255, static_cast<int>(caretOpacity * 255)),
+            1.0f, 0, ImGui::GetForegroundDrawList(), 0
+        );
     }
-    else {
-        caretOpacity += io.DeltaTime * 2.f;
-        if (caretOpacity > 1.f) { caretOpacity = 1.f; caretIncreasing = false; }
-    }
-    ImVec2 caretPos(typeRectPos.x + 5.f + currentTextWidth, typeRectPos.y + 5.f);
-    ImRenderUtils::fillRectangle(ImVec4(caretPos.x, caretPos.y, caretPos.x + 2.f, caretPos.y + textSize),
-        ImColor(255, 255, 255, (int)(caretOpacity * 255)), 1.0f, 0, ImGui::GetForegroundDrawList(), 0);
-
-    // --- End Search Bar Section --- //
+    // --- End Search Bar Section ---
 
     ImGui::PopFont();
+
 
 
 }

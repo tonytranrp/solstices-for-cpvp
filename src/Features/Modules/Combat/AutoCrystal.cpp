@@ -44,106 +44,143 @@ void AutoCrystal::onDisable() {
     mLastTarget = nullptr;
     mRotating = false;
 }
-
+/**
+ * @brief Calculates the explosion damage inflicted by a crystal on a target.
+ *
+ * The damage is computed using the distance between the explosion and the target,
+ * the visibility (using a ray trace based method), and a simplified armor reduction.
+ * An early-out is performed if the target is beyond 12 blocks or if visibility is low.
+ *
+ * @param crystalPos The block position of the crystal.
+ * @param target The target actor.
+ * @return The calculated damage, or 0 if the target is too far or not visible enough.
+ */
 float AutoCrystal::calculateDamage(const BlockPos& crystalPos, Actor* target) {
     auto* blockSource = ClientInstance::get()->getBlockSource();
-    if (!blockSource || !target) return 0.f;
+    if (!blockSource || !target)
+        return 0.f;
 
-    glm::vec3 explosionPos(crystalPos.x + 0.5f, crystalPos.y + 1.0f, crystalPos.z + 0.5f);
-    glm::vec3 targetPos = *target->getPos();
+    // Compute the explosion's center position (above the crystal).
+    const glm::vec3 explosionPos(crystalPos.x + 0.5f, crystalPos.y + 1.0f, crystalPos.z + 0.5f);
+    const glm::vec3 targetPos = *target->getPos();
 
-    // Create a CalcUnit to wrap the data
+    // Create a calculation unit to capture distance and other parameters.
     CalcUnit calc(crystalPos, explosionPos, targetPos);
 
-    // Early-out if the target is too far
-    if (calc.distance > 12.0f) return 0.f;
+    // Early-out if the target is beyond the effective range (12 blocks).
+    if (calc.distance > 12.0f)
+        return 0.f;
 
+    // Compute visibility; if below a threshold, cancel damage.
     float visibility = blockSource->getSeenPercent(explosionPos, target->getAABB());
-    if (visibility < 0.1f) return 0.f;
+    if (visibility < 0.1f)
+        return 0.f;
 
-    // Java-style explosion damage calculation
+    // Calculate the impact factor based on distance and visibility.
     float impact = (1.0f - (calc.distance / 12.0f)) * visibility;
     float baseDamage = ((impact * impact) * 7.0f + impact * 0.5f) * 12.0f + 1.0f;
 
-    // Armor reduction logic (simplified)
+    // Apply armor reduction based on target's equipped armor.
     if (auto* equipment = target->getArmorContainer()) {
         float armorValue = 0.f;
         for (int i = 0; i < 4; i++) {
-            auto* item = equipment->getItem(i);
-            if (item && item->mItem) {
-                float protection = item->getEnchantValue(Enchant::PROTECTION) * 0.04f;
-                float blastProtection = item->getEnchantValue(Enchant::BLAST_PROTECTION) * 0.08f;
-                armorValue += 2.0f + protection + blastProtection;
+            if (auto* item = equipment->getItem(i)) {
+                if (item->mItem) {
+                    armorValue += 2.0f
+                        + item->getEnchantValue(Enchant::PROTECTION) * 0.04f
+                        + item->getEnchantValue(Enchant::BLAST_PROTECTION) * 0.08f;
+                }
             }
         }
         baseDamage *= (1.0f - (std::min(20.0f, armorValue) / 25.0f));
     }
     return baseDamage;
 }
+
+/**
+ * @brief Checks if a crystal can be placed at the given block position.
+ *
+ * This function minimizes getBlock calls by pre-fetching the base and two blocks
+ * above the candidate position and performing early-out checks, including a distance
+ * check against the local player.
+ *
+ * @param pos The candidate block position.
+ * @param runtimeActors List of runtime actors for collision checking.
+ * @return true if the crystal placement is valid, false otherwise.
+ */
 bool AutoCrystal::canPlaceCrystal(const BlockPos& pos, const std::vector<Actor*>& runtimeActors) {
     auto* bs = ClientInstance::get()->getBlockSource();
     if (!bs) return false;
 
-    // Quickly retrieve the block at the candidate position.
-    const Block* block = bs->getBlock(pos);
-    if (!block) return false;
-    int blockId = block->mLegacy->getBlockId();
-    // Only allow obsidian (ID 49) or bedrock (ID 7)
-    if (blockId != 49 && blockId != 7) return false;
+    // Pre-fetch blocks for the candidate position and the two blocks above it.
+    const Block* baseBlock = bs->getBlock(pos);
+    const Block* blockAbove1 = bs->getBlock({ pos.x, pos.y + 1, pos.z });
+    const Block* blockAbove2 = bs->getBlock({ pos.x, pos.y + 2, pos.z });
+    if (!baseBlock || !blockAbove1 || !blockAbove2)
+        return false;
 
-    // Check that the two blocks above are air.
-    BlockPos above = pos;
-    above.y += 1;
-    if (bs->getBlock(above)->mLegacy->getBlockId() != 0) return false;
-    above.y += 1;
-    if (bs->getBlock(above)->mLegacy->getBlockId() != 0) return false;
+    // Validate that the base is either obsidian (ID 49) or bedrock (ID 7)
+    // and that the two blocks above are air (ID 0).
+    int baseId = baseBlock->mLegacy->getBlockId();
+    if (baseId != 49 && baseId != 7)
+        return false;
+    if (blockAbove1->mLegacy->getBlockId() != 0 || blockAbove2->mLegacy->getBlockId() != 0)
+        return false;
 
-    // Define the crystal placement AABB.
-    AABB placeAABB(
-        glm::vec3(pos.x, pos.y + 1.f, pos.z),
-        glm::vec3(pos.x + 1.f, pos.y + 2.f, pos.z + 1.f),
-        true
-    );
+    // Verify that the candidate is within the placement range of the player.
+    auto* player = ClientInstance::get()->getLocalPlayer();
+    if (!player)
+        return false;
+    glm::vec3 crystalCenter(pos.x + 0.5f, pos.y + 1.0f, pos.z + 0.5f);
+    if (glm::distance(*player->getPos(), crystalCenter) > mPlaceRange.mValue)
+        return false;
 
-    // Iterate over the runtime actors (only one loop now)
+    // Construct the crystal placement bounding box.
+    AABB placeAABB(glm::vec3(pos.x, pos.y + 1.f, pos.z), glm::vec3(pos.x + 1.f, pos.y + 2.f, pos.z + 1.f), true);
+
+    // Check for collisions with other runtime actors.
     for (auto* entity : runtimeActors) {
-        if (!entity->isValid()) continue;
-        // Ignore existing crystals.
-        if (entity->getActorTypeComponent()->mType == ActorType::EnderCrystal)
+        if (!entity->isValid() || entity->getActorTypeComponent()->mType == ActorType::EnderCrystal)
             continue;
 
         AABB entityAABB = entity->getAABB();
-        // Skip invalid/degenerated bounding boxes.
-        if (entityAABB.mMin == entityAABB.mMax) continue;
-        // Slightly expand the entity's AABB.
+        if (entityAABB.mMin == entityAABB.mMax)
+            continue; // Skip invalid bounding boxes
+
+        // Expand the actor's AABB slightly to allow some tolerance.
         entityAABB.mMin -= glm::vec3(0.1f, 0.f, 0.1f);
         entityAABB.mMax += glm::vec3(0.1f, 0.f, 0.1f);
 
-        // Use a simple intersection check.
         if (placeAABB.intersects(entityAABB))
             return false;
     }
-
-    // Ensure the player is within placement range.
-    auto* player = ClientInstance::get()->getLocalPlayer();
-    if (!player) return false;
-    glm::vec3 crystalCenter(pos.x + 0.5f, pos.y + 1.0f, pos.z + 0.5f);
-    return glm::distance(*player->getPos(), crystalCenter) <= mPlaceRange.mValue;
+    return true;
 }
-
+/**
+ * @brief Searches for valid crystal placement positions around the target actor using a radial search.
+ *
+ * Instead of checking every candidate in a large cubic area, this version precomputes candidate offsets
+ * sorted by their distance from the target. The search then proceeds outward in "rings" and stops as soon as
+ * any valid candidate is found in the current ring (i.e. once the offsets start getting larger than the best
+ * candidate's ring). Additionally, it calculates the self damage (to the local player) and only accepts
+ * candidates where the self damage does not exceed mMaxSelfDamage. Finally, an extra filter using mPlaceRangePlayer
+ * ensures that candidates are within a specified range of the local player's position.
+ *
+ * @param runtimeActors The current list of runtime actors.
+ * @return A vector containing the best candidate placement position (or empty if none found).
+ */
 std::vector<AutoCrystal::PlacePosition> AutoCrystal::findPlacePositions(const std::vector<Actor*>& runtimeActors) {
-    std::vector<PlacePosition> positions;
+    std::vector<PlacePosition> positions{};
     auto* player = ClientInstance::get()->getLocalPlayer();
-    if (!player) return positions;
-    auto* bs = ClientInstance::get()->getBlockSource();
-    if (!bs) return positions;
+    if (!player)
+        return positions;
 
-    // Select the closest enemy actor within range
+    // --- Find the closest enemy actor within mRange ---
     Actor* targetActor = nullptr;
     float closestDist = std::numeric_limits<float>::max();
-    BlockPos targetPos{};
     for (auto* actor : runtimeActors) {
-        if (actor == player || !actor->isValid() || !actor->isPlayer())
+        // Skip self, invalid actors, and crystals.
+        if (actor == player || !actor->isValid() || actor->getActorTypeComponent()->mType == ActorType::EnderCrystal)
             continue;
         float dist = glm::distance(*actor->getPos(), *player->getPos());
         if (dist > mRange.mValue)
@@ -154,57 +191,139 @@ std::vector<AutoCrystal::PlacePosition> AutoCrystal::findPlacePositions(const st
         }
     }
     if (!targetActor)
-        return positions;  // No enemy within range
+        return positions;
 
-    targetPos = *targetActor->getPos();
+    // Use the target actor's position as the center of our search.
+    BlockPos targetPos = *targetActor->getPos();
+
+    // --- Define search parameters ---
     int range = static_cast<int>(mPlaceRange.mValue);
-    // Loop over candidate offsets in a cube around the target.
+    // Y offsets based on empirical values.
+    const int yMin = -5, yMax = 1;
+
+    // --- Precompute candidate offsets relative to targetPos ---
+    struct Offset {
+        int x, y, z;
+        float sqrDist; // squared distance from (0,0,0)
+    };
+    std::vector<Offset> offsets;
     for (int x = -range; x <= range; x++) {
-        for (int y = -3; y <= 3; y++) {
+        for (int y = yMin; y <= yMax; y++) {
             for (int z = -range; z <= range; z++) {
-                BlockPos checkPos = targetPos + BlockPos(x, y, z);
-                // Now perform the full placement check using our runtime list.
-                if (!canPlaceCrystal(checkPos, runtimeActors))
-                    continue;
-                float targetDamage = calculateDamage(checkPos, targetActor);
-                if (targetDamage >= mMinimumDamage.mValue) {
-                    // For now, self damage is set to 0; add calculation if desired.
-                    positions.emplace_back(checkPos, targetDamage, 0.f);
-                
-                }
+                float sqr = static_cast<float>(x * x + y * y + z * z);
+                offsets.push_back({ x, y, z, sqr });
             }
         }
     }
+    // Sort offsets by increasing squared distance.
+    std::sort(offsets.begin(), offsets.end(), [](const Offset& a, const Offset& b) {
+        return a.sqrDist < b.sqrDist;
+        });
 
-    // Sort placements so that higher target damage comes first.
-    std::sort(positions.begin(), positions.end(), PlacePositionCompare());
+    // --- Radial search for a valid candidate ---
+    PlacePosition bestCandidate;
+    bool foundCandidate = false;
+    float currentRing = -1.f;  // squared distance where we first found a candidate
+
+    for (size_t i = 0; i < offsets.size(); i++) {
+        const auto& off = offsets[i];
+
+        // Break out if candidate was found and now we are in a further ring.
+        if (foundCandidate && off.sqrDist > currentRing)
+            break;
+        if (!foundCandidate)
+            currentRing = off.sqrDist;
+
+        // Candidate block position.
+        BlockPos checkPos = targetPos + BlockPos(off.x, off.y, off.z);
+        // Candidate's center position (offset by 0.5 in x/z and 1.0 in y).
+        glm::vec3 center(checkPos.x + 0.5f, checkPos.y + 1.0f, checkPos.z + 0.5f);
+
+        // Ensure candidate is within the general placement range.
+        if (glm::distance(*player->getPos(), center) > mPlaceRange.mValue)
+            continue;
+        // Additional filter: candidate must be within mPlaceRangePlayer from the local player.
+        if (glm::distance(*player->getPos(), center) > mPlaceRangePlayer.mValue)
+            continue;
+        // Perform the expensive placement check.
+        if (!canPlaceCrystal(checkPos, runtimeActors))
+            continue;
+
+        // Calculate the expected damage on the target.
+        float targetDamage = calculateDamage(checkPos, targetActor);
+        if (targetDamage < mMinimumDamage.mValue)
+            continue;
+
+        // Calculate self damage (damage to the local player).
+        float selfDamage = calculateDamage(checkPos, player);
+        if (selfDamage > mMaxSelfDamage.mValue)
+            continue;
+
+        // Update best candidate if this candidate yields higher target damage.
+        if (!foundCandidate || targetDamage > bestCandidate.targetDamage) {
+            bestCandidate = PlacePosition(checkPos, targetDamage, selfDamage);
+            foundCandidate = true;
+        }
+    }
+
+    if (foundCandidate)
+        positions.push_back(bestCandidate);
     return positions;
 }
 
 
+/**
+ * @brief Finds valid crystals to break.
+ *
+ * Iterates through runtime actors to locate EnderCrystals within range.
+ * For each crystal, calculates the expected damage (using calculateDamage) and
+ * only adds those that exceed the minimum damage threshold.
+ *
+ * If the "Break Own" setting is enabled, only crystals located near the last placed
+ * crystal position are considered.
+ *
+ * @param runtimeActors The current list of runtime actors.
+ * @return A sorted vector of break targets (highest target damage first).
+ */
 std::vector<AutoCrystal::BreakTarget> AutoCrystal::findBreakTargets(const std::vector<Actor*>& runtimeActors) {
-    std::vector<BreakTarget> breakTargets;
+    std::vector<BreakTarget> breakTargets{};
     auto* player = ClientInstance::get()->getLocalPlayer();
-    if (!player) return breakTargets;
+    if (!player)
+        return breakTargets;
 
-    // Iterate over runtime actors to find valid crystals.
     for (auto* actor : runtimeActors) {
         if (!actor->isValid() || actor->getActorTypeComponent()->mType != ActorType::EnderCrystal)
             continue;
         float dist = glm::distance(*actor->getPos(), *player->getPos());
         if (dist > mRange.mValue)
             continue;
-        // Calculate damage values; for demonstration we use calculateDamage.
+
+        // Calculate the target damage; if it doesn't meet our threshold, skip.
         float targetDmg = calculateDamage(BlockPos(actor->getPos()->x, actor->getPos()->y, actor->getPos()->z), player);
-        float selfDmg = 0.f;
-        breakTargets.emplace_back(actor, targetDmg, selfDmg);
+        if (targetDmg < mMinimumDamage.mValue)
+            continue;
+
+        // If "Break Own" is enabled, only consider crystals near our last placed position.
+        if (mBreakOnlyOwn.mValue) {
+            if (!mHasPlacedCrystal)
+                continue; // We haven't placed a crystal yet.
+            glm::vec3 placedCenter(mLastPlacedPos.x + 0.5f, mLastPlacedPos.y + 1.0f, mLastPlacedPos.z + 0.5f);
+            glm::vec3 crystalCenter = *actor->getPos(); // Assuming the actor position is its center.
+            if (glm::distance(placedCenter, crystalCenter) > 1.0f)
+                continue;
+        }
+
+        // Self damage can be set to 0.f here (or calculate if needed).
+        breakTargets.emplace_back(actor, targetDmg, 0.f);
     }
-    // Sort break targets by descending target damage.
+
+    // Sort break targets so that those with the highest target damage come first.
     std::sort(breakTargets.begin(), breakTargets.end(), [](const BreakTarget& a, const BreakTarget& b) {
         return a.targetDamage > b.targetDamage;
         });
     return breakTargets;
 }
+
 //https://stackoverflow.com/questions/5743678/generate-random-number-between-0-and-10
 template <typename T>
 T randomFrom(const T min, const T max)
@@ -218,13 +337,105 @@ T randomFrom(const T min, const T max)
     dist_type uni(min, max);
     return static_cast<T>(uni(re));
 }
+/**
+ * @brief Places a crystal at the given placement position.
+ *
+ * If using silent switch mode, the function spoofs the crystal slot so that the actual
+ * selected slot remains unchanged. The function also respects the placement delay.
+ *
+ * @param pos The candidate crystal placement position.
+ */
 void AutoCrystal::placeCrystal(const PlacePosition& pos) {
     auto* player = ClientInstance::get()->getLocalPlayer();
-    if (!player || !player->getGameMode()) return;
+    if (!player || !player->getGameMode())
+        return;
 
-    if (NOW - mLastPlace < mPlaceDelay.mValue) return;
-    player->getGameMode()->buildBlock(pos.position, randomFrom(0,5), false);
+    if (NOW - mLastPlace < mPlaceDelay.mValue)
+        return;
+
+    // If using silent switching, spoof the crystal slot before placing.
+    if (mSwitchMode.mValue == SwitchMode::Silent && mShouldSpoofSlot) {
+        PacketUtils::spoofSlot(mCrystalSlot, false);
+    }
+
+    player->getGameMode()->buildBlock(pos.position, randomFrom(0, 5), false);
     mLastPlace = NOW;
+
+    // Record the placement position and set our flag.
+    mLastPlacedPos = pos.position;
+    mHasPlacedCrystal = true;
+}
+/**
+ * @brief Breaks a crystal if it meets all conditions.
+ *
+ * Checks if the crystal is within break range and, if "Break Own" is enabled,
+ * only breaks the crystal if it is located near the last placed position.
+ * Uses prediction mode if enabled.
+ *
+ * @param crystal The crystal actor to break.
+ */
+void AutoCrystal::breakCrystal(Actor* crystal) {
+    if (!crystal)
+        return;
+
+    auto* player = ClientInstance::get()->getLocalPlayer();
+    if (!player || !player->getGameMode())
+        return;
+
+    float distance = glm::distance(*crystal->getPos(), *player->getPos());
+    if (distance > mPlaceRange.mValue)
+        return; // Crystal is out of break range.
+
+    // If "Break Own" is enabled, ensure the crystal is near our placed position.
+    if (mBreakOnlyOwn.mValue && mHasPlacedCrystal) {
+        glm::vec3 placedCenter(mLastPlacedPos.x + 0.5f, mLastPlacedPos.y + 1.0f, mLastPlacedPos.z + 0.5f);
+        glm::vec3 crystalCenter = *crystal->getPos();
+        if (glm::distance(placedCenter, crystalCenter) > 1.0f)
+            return;
+    }
+
+    if (!mIdPredict.mValue) {
+        if (mSwitchMode.mValue == SwitchMode::Silent && mShouldSpoofSlot) {
+            PacketUtils::spoofSlot(mCrystalSlot, false);
+        }
+        player->getGameMode()->attack(crystal);
+        player->swing();
+        return;
+    }
+
+    // Enable prediction mode
+    mShouldIdPredict = true;
+    mLastAttackId = crystal->getRuntimeID();
+    player->getGameMode()->attack(crystal);
+    player->swing();
+    for (int i = 0; i < mPredictAmount.mValue; i++) {
+        uint64_t predictedID = mLastAttackId + i;
+        int attackSlot = (mSwitchMode.mValue == SwitchMode::Silent && mShouldSpoofSlot)
+            ? mCrystalSlot
+            : player->getSupplies()->mSelectedSlot;
+        PacketUtils::spoofSlot(attackSlot, false);
+        std::shared_ptr<InventoryTransactionPacket> attackTransaction =
+            ActorUtils::createAttackTransactionPredictId(crystal, attackSlot, predictedID);
+        PacketUtils::queueSend(attackTransaction, false);
+    }
+    // Clear prediction state.
+    mLastAttackId += mPredictAmount.mValue;
+    mShouldIdPredict = false;
+}
+
+/**
+ * @brief Retrieves the candidate crystal placement positions.
+ *
+ * This function applies a search delay before querying the placement positions.
+ *
+ * @param runtimeActors The current list of runtime actors.
+ * @return A vector of valid placement positions.
+ */
+std::vector<AutoCrystal::PlacePosition> AutoCrystal::getplacmenet(const std::vector<Actor*>& runtimeActors) {
+    if (NOW - mLastsearchPlace < mPlaceSearchDelay.mValue)
+        return {};
+    mLastsearchPlace = NOW;
+    return findPlacePositions(runtimeActors);
 }
 void AutoCrystal::switchToCrystal() {
     auto player = ClientInstance::get()->getLocalPlayer();
@@ -271,85 +482,40 @@ void AutoCrystal::switchBack() {
         mHasSwitched = false;
     }
 }
-void AutoCrystal::breakCrystal(Actor* crystal) {
-    if (!crystal) return;
-
-    auto* player = ClientInstance::get()->getLocalPlayer();
-    if (!player || !player->getGameMode()) return;
-
-    // Check if the crystal is within the allowed break range.
-    // Ensure you have a setting like mBreakRange defined.
-    float distance = glm::distance(*crystal->getPos(), *player->getPos());
-    if (distance > mPlaceRange.mValue) {
-        return; // Crystal is out of break range.
-    }
-
-    if (!mIdPredict.mValue) {
-        if (mSwitchMode.mValue == SwitchMode::Silent && mShouldSpoofSlot) {
-            PacketUtils::spoofSlot(mCrystalSlot, false);
-        }
-        player->getGameMode()->attack(crystal);
-        player->swing();
-        return;
-    }
-
-    // Enable prediction mode
-    mShouldIdPredict = true;
-    mLastAttackId = crystal->getRuntimeID();
-
-    for (int i = 0; i < mPredictAmount.mValue; i++) {
-        uint64_t predictedID = mLastAttackId + i;
-
-        int attackSlot = (mSwitchMode.mValue == SwitchMode::Silent && mShouldSpoofSlot)
-            ? mCrystalSlot
-            : player->getSupplies()->mSelectedSlot;
-
-        std::shared_ptr<InventoryTransactionPacket> attackTransaction =
-            ActorUtils::createAttackTransactionPredictId(crystal, attackSlot, predictedID);
-        PacketUtils::queueSend(attackTransaction, false);
-    }
-    player->getGameMode()->attack(crystal);
-
-    // Clear the known crystals after attempting attacks
-    mLastAttackId += mPredictAmount.mValue;
-    mShouldIdPredict = false;
-    player->swing();
-}
-
-std::vector<AutoCrystal::PlacePosition> AutoCrystal::getplacmenet(const std::vector<Actor*>& runtimeActors) {
-    std::vector<AutoCrystal::PlacePosition> placementpos;
-    if (NOW - mLastsearchPlace < mPlaceSearchDelay.mValue) return placementpos;
-    placementpos = findPlacePositions(runtimeActors);
-    return placementpos;
-    mLastsearchPlace = NOW;
-}
+/**
+ * @brief Main tick event handler.
+ *
+ * This function triggers crystal placement and breaking by:
+ * - Switching to the crystal slot.
+ * - Searching for valid placements.
+ * - Placing a crystal if a valid candidate exists.
+ * - Processing break targets.
+ * - Switching back to the previous slot if required.
+ *
+ * @param event The base tick event.
+ */
 void AutoCrystal::onBaseTickEvent(BaseTickEvent& event) {
-    if (!mAutoPlace.mValue) return;
+    if (!mAutoPlace.mValue)
+        return;
     auto* player = ClientInstance::get()->getLocalPlayer();
-    if (!player) return;
+    if (!player)
+        return;
     auto* level = player->getLevel();
-    if (!level) return;
+    if (!level)
+        return;
 
-    // Grab the runtime actor list once.
+    // Retrieve the current list of runtime actors.
     const auto& runtimeActors = level->getRuntimeActorList();
-
     switchToCrystal();
 
-    // Get potential placements using the pre-obtained runtime list.
- 
+    // Get potential crystal placements.
     auto placements = getplacmenet(runtimeActors);
-
-    
     mPossiblePlacements = placements;
     if (!placements.empty()) {
-        // Place crystal at best candidate.
         placeCrystal(placements[0]);
-       // ChatUtils::displayClientMessage("position placed : " + std::to_string(placements[0].position.x) + " " + std::to_string(placements[0].position.y) + " " + std::to_string(placements[0].position.x));
-       
-
     }
 
-    // Process break targets using the same runtime list.
+    // Process break targets for crystals within range.
     auto breakTargets = findBreakTargets(runtimeActors);
     if (!breakTargets.empty()) {
         breakCrystal(breakTargets[0].crystal);
@@ -392,6 +558,7 @@ void AutoCrystal::onPacketOutEvent(PacketOutEvent& event) {
                 transac->mClickPos.y = transac->mClickPos.y - 0.1f; // Slight offset for better placement
             }
         }
+
     }
     
     
@@ -404,6 +571,7 @@ void AutoCrystal::onPacketOutEvent(PacketOutEvent& event) {
         pkt->mRot = rots;
         pkt->mYHeadRot = rots.y;
     }
+
 }
 
 

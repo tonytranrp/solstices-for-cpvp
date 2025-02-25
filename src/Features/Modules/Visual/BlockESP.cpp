@@ -35,6 +35,7 @@ constexpr int DEEPSLATE_IRON_ORE = 656;
 constexpr int DEEPSLATE_LAPIS_ORE = 655;
 constexpr int DEEPSLATE_COAL_ORE = 661;
 constexpr int PORTAL = 90;
+constexpr int OBSIDIAN = 49;
 
 constexpr int CHEST = 54;
 constexpr int ENDER_CHEST = 130;
@@ -278,6 +279,7 @@ std::vector<int> BlockESP::getEnabledBlocks()
 
     if (mPortal.mValue)
     {
+        enabledBlocks.push_back(OBSIDIAN);
         enabledBlocks.push_back(PORTAL);
     }
 

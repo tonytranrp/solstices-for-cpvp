@@ -45,6 +45,14 @@ public:
     static ImVec4 lerp(ImVec4& a, ImVec4& b, float t);
     static ImVec2 lerp(ImVec2& a, ImVec2& b, float t);
     static ImColor lerpImColor(ImColor& a, ImColor& b, float t);
+    static ImColor lerpImColor(const ImColor& a, const ImColor& b, float t)
+    {
+        return ImColor(lerp(a.Value.x, b.Value.x, t),
+            lerp(a.Value.y, b.Value.y, t),
+            lerp(a.Value.z, b.Value.z, t),
+            lerp(a.Value.w, b.Value.w, t));
+    }
+
     static float getRotationKeyOffset(bool allowStrafe = true);
     static glm::vec2 getMotion(float yaw, float speed, bool allowStrafe = true);
     template <typename T>
