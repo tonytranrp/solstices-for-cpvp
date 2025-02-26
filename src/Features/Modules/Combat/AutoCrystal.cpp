@@ -15,6 +15,7 @@
 #include <SDK/Minecraft/Options.hpp>
 #include <SDK/Minecraft/Actor/GameMode.hpp>
 #include <SDK/Minecraft/World/Level.hpp>
+#include <Features/Modules/Misc/Friends.hpp>  // For friend checking
 #include <SDK/Minecraft/World/HitResult.hpp>
 #include <SDK/Minecraft/Inventory/PlayerInventory.hpp>
 #include <SDK/Minecraft/Network/LoopbackPacketSender.hpp>
@@ -97,204 +98,226 @@ float AutoCrystal::calculateDamage(const BlockPos& crystalPos, Actor* target) {
     }
     return baseDamage;
 }
-
 /**
- * @brief Checks if a crystal can be placed at the given block position.
+ * @brief Throttled retrieval of placement positions to reduce CPU usage.
  *
- * This function minimizes getBlock calls by pre-fetching the base and two blocks
- * above the candidate position and performing early-out checks, including a distance
- * check against the local player.
+ * Uses mPlaceSearchDelay to limit how often findPlacePositions is called. Updates mLastsearchPlace
+ * appropriately to ensure we don’t recalc too frequently. Renamed from getplacmenet (typo) for clarity.
  *
- * @param pos The candidate block position.
- * @param runtimeActors List of runtime actors for collision checking.
- * @return true if the crystal placement is valid, false otherwise.
+ * @param runtimeActors The list of current actors in the world.
+ * @return Vector of PlacePosition (potential crystal placements).
  */
-bool AutoCrystal::canPlaceCrystal(const BlockPos& pos, const std::vector<Actor*>& runtimeActors) {
-    auto* bs = ClientInstance::get()->getBlockSource();
-    if (!bs) return false;
-
-    // Pre-fetch blocks for the candidate position and the two blocks above it.
-    const Block* baseBlock = bs->getBlock(pos);
-    const Block* blockAbove1 = bs->getBlock({ pos.x, pos.y + 1, pos.z });
-    const Block* blockAbove2 = bs->getBlock({ pos.x, pos.y + 2, pos.z });
-    if (!baseBlock || !blockAbove1 || !blockAbove2)
-        return false;
-
-    // Validate that the base is either obsidian (ID 49) or bedrock (ID 7)
-    // and that the two blocks above are air (ID 0).
-    int baseId = baseBlock->mLegacy->getBlockId();
-    if (baseId != 49 && baseId != 7)
-        return false;
-    if (blockAbove1->mLegacy->getBlockId() != 0 || blockAbove2->mLegacy->getBlockId() != 0)
-        return false;
-
-    // Verify that the candidate is within the placement range of the player.
-    auto* player = ClientInstance::get()->getLocalPlayer();
-    if (!player)
-        return false;
-    glm::vec3 crystalCenter(pos.x + 0.5f, pos.y + 1.0f, pos.z + 0.5f);
-    if (glm::distance(*player->getPos(), crystalCenter) > mPlaceRange.mValue)
-        return false;
-
-    // Construct the crystal placement bounding box.
-    AABB placeAABB(glm::vec3(pos.x, pos.y + 1.f, pos.z), glm::vec3(pos.x + 1.f, pos.y + 2.f, pos.z + 1.f), true);
-
-    // Check for collisions with other runtime actors.
-    for (auto* entity : runtimeActors) {
-        if (!entity->isValid() || entity->getActorTypeComponent()->mType == ActorType::EnderCrystal)
-            continue;
-
-        AABB entityAABB = entity->getAABB();
-        if (entityAABB.mMin == entityAABB.mMax)
-            continue; // Skip invalid bounding boxes
-
-        // Expand the actor's AABB slightly to allow some tolerance.
-        entityAABB.mMin -= glm::vec3(0.1f, 0.f, 0.1f);
-        entityAABB.mMax += glm::vec3(0.1f, 0.f, 0.1f);
-
-        if (placeAABB.intersects(entityAABB))
-            return false;
+std::vector<AutoCrystal::PlacePosition> AutoCrystal::getPlacement(const std::vector<Actor*>& runtimeActors) {
+    std::vector<PlacePosition> placementPos;
+    // ⏳ Throttle search frequency to save CPU
+    if (NOW - mLastsearchPlace < mPlaceSearchDelay.mValue) {
+        return placementPos;
     }
-    return true;
+    // Perform placement position search and update last search time
+    placementPos = findPlacePositions(runtimeActors);
+    mLastsearchPlace = NOW;
+    return placementPos;
 }
-/**
- * @brief Searches for valid crystal placement positions around the target actor using a radial search.
- *
- * Instead of checking every candidate in a large cubic area, this version precomputes candidate offsets
- * sorted by their distance from the target. The search then proceeds outward in "rings" and stops as soon as
- * any valid candidate is found in the current ring (i.e. once the offsets start getting larger than the best
- * candidate's ring). Additionally, it calculates the self damage (to the local player) and only accepts
- * candidates where the self damage does not exceed mMaxSelfDamage. Finally, an extra filter using mPlaceRangePlayer
- * ensures that candidates are within a specified range of the local player's position.
- *
- * @param runtimeActors The current list of runtime actors.
- * @return A vector containing the best candidate placement position (or empty if none found).
- */
+
 std::vector<AutoCrystal::PlacePosition> AutoCrystal::findPlacePositions(const std::vector<Actor*>& runtimeActors) {
-    std::vector<PlacePosition> positions{};
+    std::vector<PlacePosition> positions;
     auto* player = ClientInstance::get()->getLocalPlayer();
     if (!player)
         return positions;
 
-    // --- Find the closest enemy actor within mRange ---
+    // 🧭 **Find the closest valid enemy actor within mRange**
     Actor* targetActor = nullptr;
     float closestDist = std::numeric_limits<float>::max();
+    glm::vec3 playerPos = *player->getPos();  // Cache player position to avoid repeated calls
     for (auto* actor : runtimeActors) {
-        // Skip self, invalid actors, and crystals.
-        if (actor == player || !actor->isValid() || !actor->isPlayer())
-            continue;
-        float dist = glm::distance(*actor->getPos(), *player->getPos());
-        if (dist > mRange.mValue)
-            continue;
+        // Skip self, invalid actors, non-players, and friends
+        if (actor == player || !actor->isValid() || !actor->isPlayer()) continue;
+        if (Friends::isFriend(actor->getNameTag())) continue;  // 🔒 BUGFIX: don't target friends
+        float dist = glm::distance(*actor->getPos(), playerPos);
+        if (dist > mRange.mValue) continue;  // outside overall range
         if (dist < closestDist) {
             closestDist = dist;
             targetActor = actor;
         }
     }
-    if (!targetActor)
-        return positions;
+    if (!targetActor) {
+        return positions;  // No target found, no placements needed
+    }
 
-    // Use the target actor's position as the center of our search.
+    // Use the target actor's position as the center of our search area
     BlockPos targetPos = *targetActor->getPos();
+    int range = static_cast<int>(mPlaceRange.mValue);  // radius to search around target
+    const int yMin = -5, yMax = 1;                     // vertical search offsets (empirical limits)
 
-    // --- Define search parameters ---
-    int range = static_cast<int>(mPlaceRange.mValue);
-    // Y offsets based on empirical values.
-    const int yMin = -5, yMax = 1;
-
-    // --- Precompute candidate offsets relative to targetPos ---
-    struct Offset {
-        int x, y, z;
-        float sqrDist; // squared distance from (0,0,0)
-    };
-    std::vector<Offset> offsets;
-    for (int x = -range; x <= range; x++) {
-        for (int y = yMin; y <= yMax; y++) {
-            for (int z = -range; z <= range; z++) {
-                float sqr = static_cast<float>(x * x + y * y + z * z);
-                offsets.push_back({ x, y, z, sqr });
+    // 📌 **Precompute candidate offsets sorted by distance from origin (0,0,0)**
+    struct Offset { int x, y, z; float sqrDist; };
+    static std::vector<Offset> sortedOffsets;
+    static int lastRange = -1;
+    if (range != lastRange || sortedOffsets.empty()) {
+        // ⚙️ Compute and sort offsets only when range changes or first run
+        sortedOffsets.clear();
+        for (int x = -range; x <= range; ++x) {
+            for (int y = yMin; y <= yMax; ++y) {
+                for (int z = -range; z <= range; ++z) {
+                    float sqDist = static_cast<float>(x * x + y * y + z * z);
+                    sortedOffsets.push_back({ x, y, z, sqDist });
+                }
             }
         }
+        std::sort(sortedOffsets.begin(), sortedOffsets.end(), [](const Offset& a, const Offset& b) {
+            return a.sqrDist < b.sqrDist;
+            });
+        lastRange = range;
     }
-    // Sort offsets by increasing squared distance.
-    std::sort(offsets.begin(), offsets.end(), [](const Offset& a, const Offset& b) {
-        return a.sqrDist < b.sqrDist;
-        });
 
-    // --- Radial search for a valid candidate ---
+    // 🎯 **Iterate outward from target in "rings" to find the best placement**
     PlacePosition bestCandidate;
     bool foundCandidate = false;
-    float currentRing = -1.f;  // squared distance where we first found a candidate
+    float bestRingDist = 0.0f;
+    glm::vec3 targetCenter = *targetActor->getPos();  // target's exact position (for distance calc)
+    for (const Offset& off : sortedOffsets) {
+        // If we found a candidate in a nearer ring, stop when reaching the next ring
+        if (foundCandidate && off.sqrDist > bestRingDist) break;
+        if (!foundCandidate) bestRingDist = off.sqrDist;
 
-    for (size_t i = 0; i < offsets.size(); i++) {
-        const auto& off = offsets[i];
-
-        // Break out if candidate was found and now we are in a further ring.
-        if (foundCandidate && off.sqrDist > currentRing)
-            break;
-        if (!foundCandidate)
-            currentRing = off.sqrDist;
-
-        // Candidate block position.
+        // Translate offset to an absolute BlockPos in the world
         BlockPos checkPos = targetPos + BlockPos(off.x, off.y, off.z);
-        // Candidate's center position (offset by 0.5 in x/z and 1.0 in y).
-        glm::vec3 center(checkPos.x + 0.5f, checkPos.y + 1.0f, checkPos.z + 0.5f);
+        // Compute the crystal's center position if placed at checkPos (0.5 offset in X/Z and +1.0 in Y)
+        glm::vec3 crystalCenter(checkPos.x + 0.5f, checkPos.y + 1.0f, checkPos.z + 0.5f);
 
-        // Ensure candidate is within the general placement range.
-        if (glm::distance(*player->getPos(), center) > mPlaceRange.mValue)
-            continue;
-        // Additional filter: candidate must be within mPlaceRangePlayer from the local player.
-        if (glm::distance(*player->getPos(), center) > mPlaceRangePlayer.mValue)
-            continue;
-        // Perform the expensive placement check.
-        if (!canPlaceCrystal(checkPos, runtimeActors))
-            continue;
+        // Range checks: ensure within allowable distance from target and from player
+        if (glm::distance(crystalCenter, targetCenter) > mPlaceRange.mValue) continue;          // 📏 Skip if too far from target (accuracy improvement)
+        if (glm::distance(crystalCenter, playerPos) > mPlaceRangePlayer.mValue) continue;       // 📏 Skip if out of player's placement reach
 
-        // Calculate the expected damage on the target.
+        // 💎 Check if we can place a crystal at checkPos (fast block & entity checks)
+        if (!canPlaceCrystal(checkPos, runtimeActors)) continue;
+
+        // 💥 Calculate expected damage to target and self for this position
         float targetDamage = calculateDamage(checkPos, targetActor);
-        if (targetDamage < mMinimumDamage.mValue)
-            continue;
-
-        // Calculate self damage (damage to the local player).
+        if (targetDamage < mMinimumDamage.mValue) continue;  // Skip if it won't deal enough damage to target
         float selfDamage = calculateDamage(checkPos, player);
-        if (selfDamage > mMaxSelfDamage.mValue)
-            continue;
+        if (selfDamage > mMaxSelfDamage.mValue) continue;    // Skip if it would hurt the local player too much
 
-        // Update best candidate if this candidate yields higher target damage.
+        // ⭐ Update best candidate if this position is better (higher target damage)
         if (!foundCandidate || targetDamage > bestCandidate.targetDamage) {
             bestCandidate = PlacePosition(checkPos, targetDamage, selfDamage);
             foundCandidate = true;
+            bestRingDist = off.sqrDist;  // lock search to this ring distance
         }
     }
 
-    if (foundCandidate)
+    if (foundCandidate) {
         positions.push_back(bestCandidate);
+    }
     return positions;
 }
-
 
 std::vector<AutoCrystal::BreakTarget> AutoCrystal::findBreakTargets(const std::vector<Actor*>& runtimeActors) {
     std::vector<BreakTarget> breakTargets;
     auto* player = ClientInstance::get()->getLocalPlayer();
     if (!player) return breakTargets;
+    glm::vec3 playerPos = *player->getPos();
 
-    // Iterate over runtime actors to find valid crystals.
+    // 🧭 **Identify the closest enemy (target) within range for break calculations**
+    Actor* targetActor = nullptr;
+    float closestDist = std::numeric_limits<float>::max();
     for (auto* actor : runtimeActors) {
+        if (actor == player || !actor->isValid() || !actor->isPlayer()) continue;
+        if (Friends::isFriend(actor->getNameTag())) continue;  // 🔒 BUGFIX: skip friends as targets
+        float dist = glm::distance(*actor->getPos(), playerPos);
+        if (dist > mRange.mValue) continue;
+        if (dist < closestDist) {
+            closestDist = dist;
+            targetActor = actor;
+        }
+    }
+    // 🎯 **Collect all end crystals in range and evaluate their threat/damage**
+    for (auto* actor : runtimeActors) {
+        // Filter for valid EnderCrystal entities within range
         if (!actor->isValid() || actor->getActorTypeComponent()->mType != ActorType::EnderCrystal)
             continue;
-        float dist = glm::distance(*actor->getPos(), *player->getPos());
+        float dist = glm::distance(*actor->getPos(), playerPos);
         if (dist > mRange.mValue)
             continue;
-        // Calculate damage values; for demonstration we use calculateDamage.
-        float targetDmg = calculateDamage(BlockPos(actor->getPos()->x, actor->getPos()->y, actor->getPos()->z), player);
-        float selfDmg = 0.f;
-        breakTargets.emplace_back(actor, targetDmg, selfDmg);
+
+        // Calculate potential damage to target (if one is found) and to self
+        BlockPos crystalPos(
+            static_cast<int>(actor->getPos()->x),
+            static_cast<int>(actor->getPos()->y),
+            static_cast<int>(actor->getPos()->z)
+        );
+        float damageToTarget = 0.0f;
+        if (targetActor) {
+            damageToTarget = calculateDamage(crystalPos, targetActor);
+            if (damageToTarget < mMinimumDamage.mValue) {
+                // Skip crystals that don't threaten the target enough (offensive threshold)
+                continue;
+            }
+        }
+        float damageToSelf = calculateDamage(crystalPos, player);
+        if (damageToSelf > mMaxSelfDamage.mValue) {
+            // Skip crystals that would harm the player beyond acceptable limit
+            continue;
+        }
+
+        breakTargets.emplace_back(actor, damageToTarget, damageToSelf);
     }
-    // Sort break targets by descending target damage.
+
+    // 🔃 **Sort break targets by descending target damage, with tie-breaker on self damage (descending)**
     std::sort(breakTargets.begin(), breakTargets.end(), [](const BreakTarget& a, const BreakTarget& b) {
+        if (fabs(a.targetDamage - b.targetDamage) < 1e-3) {  // nearly equal target damage
+            return a.selfDamage > b.selfDamage;  // prioritize breaking the crystal that poses higher self damage first (defensive priority)
+        }
         return a.targetDamage > b.targetDamage;
         });
     return breakTargets;
+}
+
+bool AutoCrystal::canPlaceCrystal(const BlockPos& pos, const std::vector<Actor*>& runtimeActors) {
+    BlockSource* bs = ClientInstance::get()->getBlockSource();
+    if (!bs) return false;
+    auto* player = ClientInstance::get()->getLocalPlayer();
+    if (!player) return false;
+    // ⚡ **Efficient block checks using BlockUtils and cached data**
+    // Fetch base block and ensure it's a valid obsidian or bedrock platform
+    const Block* baseBlock = bs->getBlock(pos);
+    if (!baseBlock) return false;
+    int baseId = baseBlock->mLegacy->getBlockId();
+    if (baseId != 49 && baseId != 7) {
+        return false;  // base block must be Obsidian (49) or Bedrock (7)
+    }
+    // Use BlockUtils to check exposure above the base (how many air blocks above)
+    int exposedHeight = BlockUtils::getExposedHeight(pos);
+    if (exposedHeight < 2) {
+        return false;  // 🏗️ At least two blocks above must be clear (space for crystal)
+    }
+    // Verify the crystal would be within placeable range from the player (safety net check)
+    glm::vec3 playerPos = *player->getPos();
+    glm::vec3 crystalCenter(pos.x + 0.5f, pos.y + 1.0f, pos.z + 0.5f);
+    if (glm::distance(playerPos, crystalCenter) > mPlaceRange.mValue) {
+        return false;
+    }
+
+    // 📦 **Construct the crystal's bounding box for collision checks** 
+    AABB crystalAABB(
+        glm::vec3(pos.x, pos.y + 1.0f, pos.z),         // bottom face of the crystal (on top of base block)
+        glm::vec3(pos.x + 1.0f, pos.y + 2.0f, pos.z + 1.0f), // top face (crystal height ~1 block)
+        true
+    );
+    // 🚧 **Check for entity collisions in the placement area**
+    for (auto* entity : runtimeActors) {
+        if (!entity->isValid()) continue;
+        if (entity->getActorTypeComponent()->mType == ActorType::EnderCrystal) continue;  // ignore existing crystals
+        AABB entBB = entity->getAABB();
+        if (entBB.mMin == entBB.mMax) continue;  // skip entities with no valid AABB (e.g., dead or phantoms)
+        // Expand the entity's AABB slightly (0.1 in XZ) to be safe
+        entBB.mMin -= glm::vec3(0.1f, 0.0f, 0.1f);
+        entBB.mMax += glm::vec3(0.1f, 0.0f, 0.1f);
+        if (crystalAABB.intersects(entBB)) {
+            return false;  // 🚫 Another entity is occupying the spot where the crystal would be
+        }
+    }
+    return true;
 }
 //https://stackoverflow.com/questions/5743678/generate-random-number-between-0-and-10
 template <typename T>
@@ -407,13 +430,7 @@ void AutoCrystal::breakCrystal(Actor* crystal) {
     player->swing();
 }
 
-std::vector<AutoCrystal::PlacePosition> AutoCrystal::getplacmenet(const std::vector<Actor*>& runtimeActors) {
-    std::vector<AutoCrystal::PlacePosition> placementpos;
-    if (NOW - mLastsearchPlace < mPlaceSearchDelay.mValue) return placementpos;
-    placementpos = findPlacePositions(runtimeActors);
-    return placementpos;
-    mLastsearchPlace = NOW;
-}
+
 void AutoCrystal::onBaseTickEvent(BaseTickEvent& event) {
     if (!mAutoPlace.mValue) return;
     auto* player = ClientInstance::get()->getLocalPlayer();
@@ -428,7 +445,7 @@ void AutoCrystal::onBaseTickEvent(BaseTickEvent& event) {
 
     // Get potential placements using the pre-obtained runtime list.
 
-    auto placements = getplacmenet(runtimeActors);
+    auto placements = getPlacement(runtimeActors);
 
 
     mPossiblePlacements = placements;
@@ -496,24 +513,155 @@ void AutoCrystal::onPacketOutEvent(PacketOutEvent& event) {
         pkt->mYHeadRot = rots.y;
     }
 }
-
-
-
-
 void AutoCrystal::onRenderEvent(RenderEvent& event) {
-    if (!mVisualizePlace.mValue || mPossiblePlacements.empty()) return;
+    if (!mVisualizePlace.mValue) return;
 
-    auto drawList = ImGui::GetBackgroundDrawList();
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList();
 
-    // **Only render the top placement position**
-    const auto& bestPlace = mPossiblePlacements[0];
+    static std::unordered_map<BlockPos, float> activeFadeAlphas;
+    static std::chrono::steady_clock::time_point lastRenderTime = std::chrono::steady_clock::now();
+    static BlockPos lastBestPos;
+    static glm::vec3 currentLowPos;
+    static float currentLowAlpha = 0.0f;
+    static bool lowPosInitialized = false;
 
-    float damagePercent = std::min(bestPlace.targetDamage / 20.0f, 1.0f);
-    ImColor color = ImColor(damagePercent, 1.0f - damagePercent, 0.0f, 0.5f);
+    auto now = std::chrono::steady_clock::now();
+    float deltaSeconds = std::chrono::duration<float>(now - lastRenderTime).count();
+    lastRenderTime = now;
+    if (deltaSeconds > 1.0f) {
+        deltaSeconds = 1.0f;
+    }
 
-    glm::vec3 boxPos(bestPlace.position.x, bestPlace.position.y, bestPlace.position.z);
-    AABB box(boxPos, boxPos + glm::vec3(1.0f, 1.0f, 1.0f), true);
+    if (mRenderMode.mValue == ACVisualRenderMode::Fade) {
+        std::unordered_set<BlockPos> currentPositions;
+        currentPositions.reserve(mPossiblePlacements.size());
+        for (auto& place : mPossiblePlacements) {
+            currentPositions.insert(place.position);
+        }
 
-    std::vector<ImVec2> placePoints = MathUtils::getImBoxPoints(box);
-    drawList->AddConvexPolyFilled(placePoints.data(), placePoints.size(), ImColor(color.Value.x, color.Value.y, color.Value.z, 0.25f));
+        for (auto& place : mPossiblePlacements) {
+            const BlockPos& pos = place.position;
+            if (activeFadeAlphas.find(pos) == activeFadeAlphas.end()) {
+                activeFadeAlphas[pos] = 0.0f;
+            }
+        }
+
+        for (auto it = activeFadeAlphas.begin(); it != activeFadeAlphas.end();) {
+            const BlockPos& pos = it->first;
+            float& alpha = it->second;
+            if (currentPositions.find(pos) == currentPositions.end()) {
+                float fadeStep = mFadeLerpSpeed.mValue * deltaSeconds;
+                alpha -= fadeStep;
+                if (alpha <= 0.0f) {
+                    it = activeFadeAlphas.erase(it);
+                    continue;
+                }
+            }
+            else {
+                float fadeStep = mFadeLerpSpeed.mValue * deltaSeconds;
+                alpha += fadeStep;
+                if (alpha > 1.0f) alpha = 1.0f;
+            }
+            ++it;
+        }
+
+        for (auto& entry : activeFadeAlphas) {
+            const BlockPos& pos = entry.first;
+            float alpha = entry.second;
+            if (alpha <= 0.0f) continue;
+
+            ImColor baseColor = mFadeColor.getAsImColor();
+            ImColor drawColor = ImColor(baseColor.Value.x, baseColor.Value.y, baseColor.Value.z, baseColor.Value.w * alpha);
+
+            glm::vec3 boxMin(pos.x, pos.y, pos.z);
+            glm::vec3 boxMax(pos.x + 1.0f, pos.y + 1.0f, pos.z + 1.0f);
+            AABB box(boxMin, boxMax, true);
+
+            std::vector<ImVec2> screenPts = MathUtils::getImBoxPoints(box);
+            if (!screenPts.empty()) {
+                drawList->AddConvexPolyFilled(screenPts.data(), screenPts.size(),
+                    ImColor(drawColor.Value.x, drawColor.Value.y, drawColor.Value.z, drawColor.Value.w * 0.5f));
+                drawList->AddPolyline(screenPts.data(), screenPts.size(), drawColor, ImDrawFlags_Closed, 1.5f);
+            }
+        }
+    }
+    else if (mRenderMode.mValue == ACVisualRenderMode::Square) {
+        if (mPossiblePlacements.empty()) return;
+        const BlockPos& bestPos = mPossiblePlacements[0].position;
+
+        ImColor outlineColor = mSquareColor.getAsImColor();
+        outlineColor.Value.w *= 0.8f;
+
+        ImVec2 screenCenter;
+        glm::vec3 centerWorld(bestPos.x + 0.5f, bestPos.y + 0.5f, bestPos.z + 0.5f);
+        if (RenderUtils::worldToScreen(centerWorld, screenCenter)) {
+            float halfSize = mSquareSize.mValue / 2.0f;
+            ImVec2 topLeft(screenCenter.x - halfSize, screenCenter.y - halfSize);
+            ImVec2 bottomRight(screenCenter.x + halfSize, screenCenter.y + halfSize);
+
+            drawList->AddRect(topLeft, bottomRight, outlineColor, 0.0f, 0, 2.0f);
+        }
+    }
+    else if (mRenderMode.mValue == ACVisualRenderMode::Low) {
+        if (mPossiblePlacements.empty()) {
+            if (lowPosInitialized && currentLowAlpha > 0.0f) {
+                float fadeStep = (1.0f / mLowDuration.mValue) * deltaSeconds;
+                currentLowAlpha -= fadeStep;
+                if (currentLowAlpha < 0.0f) currentLowAlpha = 0.0f;
+                if (currentLowAlpha > 0.0f) {
+                    ImColor lowColor = mLowColor.getAsImColor();
+                    lowColor.Value.w *= currentLowAlpha;
+
+                    glm::vec3 topMin(currentLowPos.x, currentLowPos.y + 1.01f, currentLowPos.z);
+                    glm::vec3 topMax(currentLowPos.x + 1.0f, currentLowPos.y + 1.08f, currentLowPos.z + 1.0f);
+                    AABB topBox(topMin, topMax, true);
+                    std::vector<ImVec2> topPts = MathUtils::getImBoxPoints(topBox);
+                    if (!topPts.empty()) {
+                        drawList->AddConvexPolyFilled(topPts.data(), topPts.size(),
+                            ImColor(lowColor.Value.x, lowColor.Value.y, lowColor.Value.z, lowColor.Value.w * 0.4f));
+                        drawList->AddPolyline(topPts.data(), topPts.size(), lowColor, ImDrawFlags_Closed, 1.5f);
+                    }
+                }
+                else {
+                    lowPosInitialized = false;
+                }
+            }
+            return;
+        }
+
+        const BlockPos& bestPos = mPossiblePlacements[0].position;
+        glm::vec3 targetPos(bestPos.x, bestPos.y, bestPos.z);
+
+        if (!lowPosInitialized) {
+            currentLowPos = targetPos;
+            currentLowAlpha = 1.0f;
+            lowPosInitialized = true;
+            lastBestPos = bestPos;
+        }
+        else if (bestPos != lastBestPos) {
+            lastBestPos = bestPos;
+        }
+
+        glm::vec3 diff = targetPos - currentLowPos;
+        float distance = glm::length(diff);
+        if (distance > 0.001f) {
+            float step = mLowLerpSpeed.mValue * deltaSeconds;
+            if (step > distance) step = distance;
+            currentLowPos += diff * (step / distance);
+        }
+
+        currentLowAlpha = 1.0f;
+        ImColor lowColor = mLowColor.getAsImColor();
+
+        glm::vec3 topMin(currentLowPos.x, currentLowPos.y + 1.01f, currentLowPos.z);
+        glm::vec3 topMax(currentLowPos.x + 1.0f, currentLowPos.y + 1.08f, currentLowPos.z + 1.0f);
+        AABB topBox(topMin, topMax, true);
+
+        std::vector<ImVec2> topFacePts = MathUtils::getImBoxPoints(topBox);
+        if (!topFacePts.empty()) {
+            drawList->AddConvexPolyFilled(topFacePts.data(), topFacePts.size(),
+                ImColor(lowColor.Value.x, lowColor.Value.y, lowColor.Value.z, lowColor.Value.w * 0.4f));
+            drawList->AddPolyline(topFacePts.data(), topFacePts.size(), lowColor, ImDrawFlags_Closed, 1.5f);
+        }
+    }
 }

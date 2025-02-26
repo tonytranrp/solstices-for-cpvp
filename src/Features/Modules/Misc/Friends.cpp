@@ -6,7 +6,7 @@
 
 #include <Solstice.hpp>
 #include <Features/Modules/Player/Teams.hpp>
-
+std::vector<std::string> Friends::mFriends;
 void Friends::onInit()
 {
     mFriends = Solstice::Prefs->mFriends;

@@ -22,14 +22,14 @@ public:
         gFriendManager = this;
     }
 
-    std::vector<std::string> mFriends;
+    static std::vector<std::string> mFriends;
 
     void onInit() override;
-    bool isFriend(const std::string& name);
-    bool isFriend(Actor* actor);
-    void addFriend(const std::string& name);
-    void addFriend(Actor* actor);
-    void removeFriend(const std::string& name);
-    void removeFriend(Actor* actor);
-    void clearFriends();
+    static bool isFriend(const std::string& name);
+    static bool isFriend(Actor* actor);
+    static void addFriend(const std::string& name);
+    static void addFriend(Actor* actor);
+    static void removeFriend(const std::string& name);
+    static void removeFriend(Actor* actor);
+    static void clearFriends();
 };
