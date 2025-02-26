@@ -35,6 +35,7 @@ public:
         bool isDragging = false, isExtended = true, wasExtended = false;
         float yOffset = 0;
         float scrollEase = 0;
+        float extensionAnim = 1.f; // New: 1.f when open, 0.f when closed.
         glm::vec2 dragVelocity = glm::vec2(0, 0);
         glm::vec2 dragAcceleration = glm::vec2(0, 0);
     };

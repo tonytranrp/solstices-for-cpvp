@@ -432,28 +432,26 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                     if (modRect.y > catRect.y + 0.5f) {
                         // --- Draw Module Background ---
                         if (mod->cScale <= 1) {
-                            // Draw different backgrounds based on module state.
                             if (mod->mEnabled)
                                 ImRenderUtils::fillRectangle(modRect, rgb, animation, radius,
                                     ImGui::GetBackgroundDrawList(), ImDrawCornerFlags_BotRight | ImDrawCornerFlags_BotLeft);
                             else
                                 ImRenderUtils::fillRectangle(modRect, ImColor(30, 30, 30), animation, radius,
                                     ImGui::GetBackgroundDrawList(), ImDrawCornerFlags_BotRight | ImDrawCornerFlags_BotLeft);
-                            // Overlay with gray for additional effect.
                             ImRenderUtils::fillRectangle(modRect, grayColor, animation, radius,
                                 ImGui::GetBackgroundDrawList(), ImDrawCornerFlags_BotRight | ImDrawCornerFlags_BotLeft);
                         }
 
                         // --- Animate and Render Module Name ---
                         std::string modName = mod->getName();
-                        // Calculate center of modRect.
                         ImVec2 center(modRect.x + modRect.getWidth() / 2.f,
                             modRect.y + modRect.getHeight() / 2.f);
+                        // When the category is closing (not extended), force the module scale to animate to 0.
+                        float targetScale = (catPositions[i].extensionAnim > 0.95f)
+                            ? (mod->mEnabled ? 1.f : 0.f)
+                            : 0.f;
+                        mod->cScale = MathUtils::animate(targetScale, mod->cScale, ImRenderUtils::getDeltaTime() * 10);
 
-                        // Animate module scale (cScale).
-                        mod->cScale = MathUtils::animate(mod->mEnabled ? 1.f : 0.f, mod->cScale, ImRenderUtils::getDeltaTime() * 10);
-
-                        // Create a scaled rectangle for a smooth scaling effect.
                         ImVec4 scaledRect(center.x - modRect.getWidth() / 2.f,
                             center.y - modRect.getHeight() / 2.f,
                             center.x + modRect.getWidth() / 2.f,
@@ -461,12 +459,10 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                         if (mod->cScale > 0) {
                             ImColor rgb1 = rgb;
                             ImColor rgb2 = ColorUtils::getThemedColor(scaledRect.y + (scaledRect.z - scaledRect.x));
-                            // Render a rounded gradient rectangle based on the current scale.
                             ImRenderUtils::fillRoundedGradientRectangle(scaledRect, rgb1, rgb2, radius,
                                 animation * mod->cScale, animation * mod->cScale, flags);
                         }
 
-                        // Determine text position: center the module name in modRect.
                         float textWidth = ImRenderUtils::getTextWidth(&modName, textSize);
                         float cRectCentreX = modRect.x + ((modRect.z - modRect.x) - textWidth) / 2;
                         float cRectCentreY = modRect.y + ((modRect.w - modRect.y) - textHeight) / 2;
@@ -476,23 +472,20 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                             textSize, animation, true);
 
                         // --- Handle Mouse Interactions for Module Toggling ---
-                        if (ImRenderUtils::isMouseOver(modRect) && catPositions[i].isExtended && isEnabled) {
-                            // If mouse is also over the overall category window, show tooltip.
+                        // Only process interactions when the category is fully open.
+                        if (ImRenderUtils::isMouseOver(modRect) && (catPositions[i].extensionAnim > 0.95f) && isEnabled) {
                             if (ImRenderUtils::isMouseOver(catWindow))
                                 tooltip = mod->mDescription;
-                            // Left-click toggles the module.
                             if (ImGui::IsMouseClicked(0) && !displayColorPicker) {
                                 if (!moduleToggled)
                                     mod->toggle();
                                 ClientInstance::get()->playUi("random.pop", 0.75f, 1.0f);
                                 moduleToggled = true;
                             }
-                            // Right-click toggles settings visibility.
                             else if (ImGui::IsMouseClicked(1) && !displayColorPicker) {
                                 if (!mod->mSettings.empty())
                                     mod->showSettings = !mod->showSettings;
                             }
-                            // Middle-click initiates binding.
                             else if (ImGui::IsMouseClicked(2) && !displayColorPicker) {
                                 lastMod = mod;
                                 isBinding = true;
@@ -501,17 +494,15 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                         }
                     }
 
-                    if (modRect.y > catRect.y - modHeight)
-                    {
-                        // Render a slight glow effect
+                    if (modRect.y > catRect.y - modHeight) {
                         ImRenderUtils::fillGradientOpaqueRectangle(
                             ImVec4(modRect.x, modRect.w, modRect.z,
-                                           modRect.w + 10.f * mod->cAnim * animation), ImColor(0, 0, 0),
-                            ImColor(0, 0, 0), 0.F * animation, 0.55F * animation);
+                                modRect.w + 10.f * mod->cAnim * animation), ImColor(0, 0, 0),
+                            ImColor(0, 0, 0), 0.f * animation, 0.55f * animation);
                     }
                     moduleY += modHeight;
-
                     modIndex++;
+
                 }
             }
             drawList->PopClipRect();
@@ -537,27 +528,33 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                 processBinding(lastBoolSetting, isBoolSettingBinding, "Currently binding " + lastBoolSetting->mName + "... Press ESC to unbind.");
             }
             // --- Category Header Rendering ---
-
-            // Convert the category name to lowercase if needed.
+            // --- Category Header Rendering ---
+// Convert the category name to lowercase if needed.
             std::string catName = lowercase ? StringUtils::toLower(categories[i]) : categories[i];
 
             // Toggle category extension on right-click over the category rectangle.
             if (ImRenderUtils::isMouseOver(catRect) && ImGui::IsMouseClicked(1))
                 catPositions[i].isExtended = !catPositions[i].isExtended;
 
-            // Slightly widen the rectangle and fill with a dark background.
-            catRect.w += 1.5f;
-            ImRenderUtils::fillRectangle(catRect, darkBlack, animation, 15, ImGui::GetBackgroundDrawList(), ImDrawFlags_RoundCornersTop);
+            // Smoothly animate the header's open/close state.
+            float targetExtension = catPositions[i].isExtended ? 1.f : 0.f;
+            catPositions[i].extensionAnim = MathUtils::animate(targetExtension, catPositions[i].extensionAnim, ImRenderUtils::getDeltaTime() * 10.f);
 
-            // Optionally, you could draw a line (gradient) beneath the header.
-            // ImVec4 lineRect(catRect.x, catRect.w - 0.75f, catRect.z, catRect.w + 0.75f);
-            // ImRenderUtils::fillGradientOpaqueRectangle(lineRect, rgb, ColorUtils::getThemedColor(catRect.y + (catRect.z - catRect.x)), animation, animation);
+            // Use extensionAnim to scale the header height.
+            float animatedCatHeight = catHeight * catPositions[i].extensionAnim;
+            ImVec4 headerRect = ImVec4(catPositions[i].x, catPositions[i].y,
+                catPositions[i].x + catWidth, catPositions[i].y + animatedCatHeight)
+                .scaleToPoint(ImVec4(screen.x / 2, screen.y / 2, screen.x / 2, screen.y / 2), inScale);
+
+            // Slightly widen the rectangle and fill with a dark background.
+            headerRect.w += 1.5f;
+            ImRenderUtils::fillRectangle(headerRect, darkBlack, animation, 15, ImGui::GetBackgroundDrawList(), ImDrawFlags_RoundCornersTop);
 
             // --- Calculate Text Center ---
             FontHelper::pushPrefFont(true, true, true);
             float headerTextHeight = ImGui::GetFont()->CalcTextSizeA(textSize * 18, FLT_MAX, -1, catName.c_str()).y;
-            float centerX = catRect.x + ((catRect.z - catRect.x) - ImRenderUtils::getTextWidth(&catName, textSize * 1.15)) / 2;
-            float centerY = catRect.y + ((catRect.w - catRect.y) - headerTextHeight) / 2;
+            float centerX = headerRect.x + ((headerRect.z - headerRect.x) - ImRenderUtils::getTextWidth(&catName, textSize * 1.15)) / 2;
+            float centerY = headerRect.y + ((headerRect.w - headerRect.y) - headerTextHeight) / 2;
 
             // --- Determine Icon for Category ---
             std::string IconStr = "B";
@@ -570,7 +567,7 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
             // --- Render Icon and Category Name ---
             ImGui::PushFont(FontHelper::Fonts["tenacity_icons_large"]);
             // Draw icon slightly inset.
-            ImRenderUtils::drawText(ImVec2(catRect.x + 10, centerY), IconStr, ImColor(255, 255, 255), textSize * 1.15, animation, true);
+            ImRenderUtils::drawText(ImVec2(headerRect.x + 10, centerY), IconStr, ImColor(255, 255, 255), textSize * 1.15, animation, true);
             ImGui::PopFont();
             ImRenderUtils::drawText(ImVec2(centerX, centerY), catName, ImColor(255, 255, 255), textSize * 1.15, animation, true);
             FontHelper::popPrefFont();  // Pop the header font.
@@ -586,8 +583,8 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                 if (catPositions[i].isDragging) {
                     if (ImGui::IsMouseDown(0)) {
                         if (!dragging) {
-                            dragOffset = ImVec2(ImRenderUtils::getMousePos().x - catRect.x,
-                                ImRenderUtils::getMousePos().y - catRect.y);
+                            dragOffset = ImVec2(ImRenderUtils::getMousePos().x - headerRect.x,
+                                ImRenderUtils::getMousePos().y - headerRect.y);
                             dragging = true;
                         }
                         // Calculate new position based on mouse position and offset.
@@ -603,11 +600,12 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                         dragging = false;
                     }
                 }
-                else if (ImRenderUtils::isMouseOver(catRect) && ImGui::IsMouseClicked(0) && isEnabled) {
+                else if (ImRenderUtils::isMouseOver(headerRect) && ImGui::IsMouseClicked(0) && isEnabled) {
                     catPositions[i].isDragging = true;
-                    dragOffset = ImRenderUtils::getMousePos() - ImVec2(catRect.x, catRect.y);
+                    dragOffset = ImRenderUtils::getMousePos() - ImVec2(headerRect.x, headerRect.y);
                 }
             }
+
 
 #pragma endregion
         }
@@ -700,15 +698,18 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
         // Adjust appearance based on mouse position.
         if (mousePos.x >= searchRegion.x && mousePos.x <= searchRegion.z &&
             mousePos.y >= searchRegion.y && mousePos.y <= searchRegion.w) {
-            searchDuration = MathUtils::lerp(1.f, searchDuration, io.DeltaTime * 10.f);
+            // While the mouse is over the search region, animate to fully open (1.0)
+            searchDuration = MathUtils::lerp(searchDuration, 1.f, io.DeltaTime * 10.f);
             closeDuration = 3.f;
         }
         else if (!isSearching && searchingModule.empty()) {
+            // After a delay (closeDuration), animate to fully closed (0.0)
             if (closeDuration < 0.f)
-                searchDuration = MathUtils::lerp(0.f, searchDuration, io.DeltaTime * 10.f);
+                searchDuration = MathUtils::lerp(searchDuration, 0.f, io.DeltaTime * 10.f);
             else
                 closeDuration -= io.DeltaTime;
         }
+
 
         // Compute the search bar rectangle (slides vertically based on searchDuration).
         ImVec4 searchRectPos(

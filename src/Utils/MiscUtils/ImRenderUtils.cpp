@@ -137,6 +137,21 @@ void ImRenderUtils::fillRoundedGradientRectangle(ImVec4 pos, const ImColor& firs
 	ImGui::ShadeVertsLinearColorGradientKeepAlpha(list, startBufferSize, endBufferSize, topLeft, bottomRight, ImColor(firstColor.Value.x, firstColor.Value.y, firstColor.Value.z, firstAlpha), ImColor(secondColor.Value.x, secondColor.Value.y, secondColor.Value.z, secondAlpha));
 	ImGui::ShadeVertsLinearColorGradientKeepAlpha(list, endBufferSize, endBufferSize2, topLeft, bottomRight, ImColor(firstColor.Value.x, firstColor.Value.y, firstColor.Value.z, firstAlpha), ImColor(secondColor.Value.x, secondColor.Value.y, secondColor.Value.z, secondAlpha));
 }
+// Add this function to ImRenderUtils.cpp and declare it in ImRenderUtils.hpp
+
+void ImRenderUtils::fillRoundedRectangle(const ImVec4& pos, const ImColor& color, float radius, float alpha, ImDrawList* list)
+{
+	if (!ImGui::GetCurrentContext())
+		return;
+
+	// Draw a filled rectangle with rounded corners.
+	// Note: The alpha parameter here is passed directly; if you want to scale the color's alpha,
+	// consider multiplying color.Value.w by alpha.
+	list->AddRectFilled(ImVec2(pos.x, pos.y),
+		ImVec2(pos.z, pos.w),
+		ImColor(color.Value.x, color.Value.y, color.Value.z, alpha),
+		radius, 0);
+}
 
 void ImRenderUtils::drawCheckMark(ImVec2 pos, float size, const ImColor& color, float alpha, float thickness)
 {
@@ -147,93 +162,103 @@ void ImRenderUtils::drawCheckMark(ImVec2 pos, float size, const ImColor& color, 
     ImGui::GetForegroundDrawList()->AddLine(end1, end2, ImColor(color.Value.x, color.Value.y, color.Value.z, alpha), thickness);
 }
 
-void ImRenderUtils::drawColorPicker(ImVec4& color, ImVec4 canvas_pos) // Hard coded sorry emily
+void ImRenderUtils::drawColorPicker(ImVec4& color, ImVec4 canvas_pos)
 {
-	static float hue = 0.0f;
-	static float saturation = 0.0f;
-	static float value = 0.0f;
+    // Static variables to track hue, saturation, and value.
+    static float hue = 0.0f;
+    static float saturation = 0.0f;
+    static float value = 0.0f;
 
-	// Color to HSV shit
-	ImGui::ColorConvertRGBtoHSV(color.x, color.y, color.z, hue, saturation, value);
+    // Convert current RGB color to HSV.
+    ImGui::ColorConvertRGBtoHSV(color.x, color.y, color.z, hue, saturation, value);
 
-	ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
-	//ImVec2 canvas_size = ImVec2(70, 40);
-	float hue_picker_thickness = 14.0f;
+    ImDrawList* draw_list = ImGui::GetBackgroundDrawList();
 
-	ImVec2 sv_picker_pos = ImVec2(canvas_pos.x, canvas_pos.y);
-	ImVec2 hue_picker_pos = ImVec2(canvas_pos.x, canvas_pos.y + canvas_pos.w + 10.0f);
+    // Interpret canvas_pos as (x, y, width, height)
+    float canvas_width = canvas_pos.z;
+    float canvas_height = canvas_pos.w;
 
-	// Draw SV Square
-	for (int y = 0; y < canvas_pos.w; y++)
-	{
-		for (int x = 0; x < canvas_pos.z; x++)
-		{
-			float s = (float)x / canvas_pos.z;
-			float v = 1.0f - (float)y / canvas_pos.w;
-			ImU32 col = ImColor::HSV(hue, s, v);
-			draw_list->AddRectFilled(
-				ImVec2(sv_picker_pos.x + x, sv_picker_pos.y + y),
-				ImVec2(sv_picker_pos.x + x + 1, sv_picker_pos.y + y + 1),
-				col
-			);
-		}
-	}
+    // Compute dynamic dimensions:
+    float gap = canvas_height * 0.2f;               // Gap between SV square and hue bar (20% of SV square height)
+    float hue_picker_thickness = canvas_height * 0.3f; // Hue bar thickness (30% of SV square height)
+    float cursor_radius = hue_picker_thickness * 0.35f; // SV cursor radius relative to hue bar thickness
 
-	// Draw the circle at the current saturation and value
-	ImVec2 sv_cursor_pos = ImVec2(
-		sv_picker_pos.x + saturation * canvas_pos.z,
-		sv_picker_pos.y + (1.0f - value) * canvas_pos.w
-	);
-	draw_list->AddCircle(sv_cursor_pos, 5.0f, IM_COL32(255, 255, 255, 255), 12, 2.0f);
+    // Define positions for the SV (saturation/value) square and the hue bar.
+    ImVec2 sv_picker_pos = ImVec2(canvas_pos.x, canvas_pos.y);
+    ImVec2 hue_picker_pos = ImVec2(canvas_pos.x, canvas_pos.y + canvas_height + gap);
 
-	// Draw Hue Bar
-	for (int i = 0; i < canvas_pos.z; i++)
-	{
-		float h = (float)i / canvas_pos.z;
-		ImU32 col = ImColor::HSV(h, 1.0f, 1.0f);
-		draw_list->AddRectFilled(
-			ImVec2(hue_picker_pos.x + i, hue_picker_pos.y),
-			ImVec2(hue_picker_pos.x + i + 1, hue_picker_pos.y + hue_picker_thickness),
-			col
-		);
-	}
+    // Draw the SV square pixel-by-pixel.
+    int sv_width = static_cast<int>(canvas_width);
+    int sv_height = static_cast<int>(canvas_height);
+    for (int y = 0; y < sv_height; y++)
+    {
+        for (int x = 0; x < sv_width; x++)
+        {
+            float s = static_cast<float>(x) / sv_width;
+            float v = 1.0f - static_cast<float>(y) / sv_height;
+            ImU32 col = ImColor::HSV(hue, s, v);
+            draw_list->AddRectFilled(
+                ImVec2(sv_picker_pos.x + x, sv_picker_pos.y + y),
+                ImVec2(sv_picker_pos.x + x + 1, sv_picker_pos.y + y + 1),
+                col
+            );
+        }
+    }
 
-	// renders the line on the hue(colour) selecter
-	ImVec2 hue_cursor_pos = ImVec2(hue_picker_pos.x + hue * canvas_pos.z, hue_picker_pos.y);
-	draw_list->AddLine(
-		ImVec2(hue_cursor_pos.x, hue_cursor_pos.y),
-		ImVec2(hue_cursor_pos.x, hue_cursor_pos.y + hue_picker_thickness),
-		IM_COL32(255, 255, 255, 255),
-		2.0f
-	);
+    // Draw a circle to indicate the current SV selection.
+    ImVec2 sv_cursor_pos = ImVec2(
+        sv_picker_pos.x + saturation * canvas_width,
+        sv_picker_pos.y + (1.0f - value) * canvas_height
+    );
+    draw_list->AddCircle(sv_cursor_pos, cursor_radius, IM_COL32(255, 255, 255, 255), 12, 2.0f);
 
-	// Handle Mouse Input for SV Square 😎
-	ImGuiIO& io = ImGui::GetIO();
-	if (ImRenderUtils::isMouseOver(ImVec4(sv_picker_pos.x, sv_picker_pos.y, sv_picker_pos.x + canvas_pos.z, sv_picker_pos.y + canvas_pos.w)))
-	{
-		if (ImGui::IsMouseDown(0))
-		{
-			ImVec2 mouse_pos_in_canvas = ImVec2(io.MousePos.x - sv_picker_pos.x, io.MousePos.y - sv_picker_pos.y);
-			saturation = mouse_pos_in_canvas.x / canvas_pos.z;
-			value = 1.0f - (mouse_pos_in_canvas.y / canvas_pos.w);
-			color = ImColor::HSV(hue, saturation, value);
-		}
-	}
+    // Draw the Hue Bar.
+    int hue_bar_width = sv_width;
+    for (int i = 0; i < hue_bar_width; i++)
+    {
+        float h_val = static_cast<float>(i) / hue_bar_width;
+        ImU32 col = ImColor::HSV(h_val, 1.0f, 1.0f);
+        draw_list->AddRectFilled(
+            ImVec2(hue_picker_pos.x + i, hue_picker_pos.y),
+            ImVec2(hue_picker_pos.x + i + 1, hue_picker_pos.y + hue_picker_thickness),
+            col
+        );
+    }
 
-	// Handle Mouse Input for Hue Bar :s
-	if (ImRenderUtils::isMouseOver(ImVec4(hue_picker_pos.x, hue_picker_pos.y, hue_picker_pos.x + canvas_pos.z, hue_picker_pos.y + hue_picker_thickness)))
-	{
-		if (ImGui::IsMouseDown(0))
-		{
-			ImVec2 mouse_pos_in_canvas = ImVec2(io.MousePos.x - hue_picker_pos.x, io.MousePos.y - hue_picker_pos.y);
-			hue = mouse_pos_in_canvas.x / canvas_pos.z;
-			color = ImColor::HSV(hue, saturation, value);
-		}
-	}
+    // Draw the hue selector line on the hue bar.
+    ImVec2 hue_cursor_pos = ImVec2(hue_picker_pos.x + hue * hue_bar_width, hue_picker_pos.y);
+    draw_list->AddLine(
+        ImVec2(hue_cursor_pos.x, hue_cursor_pos.y),
+        ImVec2(hue_cursor_pos.x, hue_cursor_pos.y + hue_picker_thickness),
+        IM_COL32(255, 255, 255, 255),
+        2.0f
+    );
 
-	// Show the selected color don't mind shit frost code :P
-	//ImVec2 color_preview_pos = ImVec2(canvas_pos.x, hue_picker_pos.y + hue_picker_thickness + 10.0f);
-	//draw_list->AddRectFilled(color_preview_pos, ImVec2(color_preview_pos.x + canvas_pos.z, color_preview_pos.y + 20.0f), ImColor(color));
+    // Handle mouse input for the SV square.
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec4 sv_rect(sv_picker_pos.x, sv_picker_pos.y, sv_picker_pos.x + canvas_width, sv_picker_pos.y + canvas_height);
+    if (ImRenderUtils::isMouseOver(sv_rect))
+    {
+        if (ImGui::IsMouseDown(0))
+        {
+            ImVec2 mouse_pos_in_canvas = ImVec2(io.MousePos.x - sv_picker_pos.x, io.MousePos.y - sv_picker_pos.y);
+            saturation = mouse_pos_in_canvas.x / canvas_width;
+            value = 1.0f - (mouse_pos_in_canvas.y / canvas_height);
+            color = ImColor::HSV(hue, saturation, value);
+        }
+    }
+
+    // Handle mouse input for the Hue Bar.
+    ImVec4 hue_rect(hue_picker_pos.x, hue_picker_pos.y, hue_picker_pos.x + canvas_width, hue_picker_pos.y + hue_picker_thickness);
+    if (ImRenderUtils::isMouseOver(hue_rect))
+    {
+        if (ImGui::IsMouseDown(0))
+        {
+            ImVec2 mouse_pos_in_canvas = ImVec2(io.MousePos.x - hue_picker_pos.x, io.MousePos.y - hue_picker_pos.y);
+            hue = mouse_pos_in_canvas.x / canvas_width;
+            color = ImColor::HSV(hue, saturation, value);
+        }
+    }
 }
 
 

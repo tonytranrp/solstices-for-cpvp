@@ -25,6 +25,7 @@ public:
 	static void drawCheckMark(ImVec2 pos, float size, const ImColor& color, float alpha, float thickness = 2.0f);
 	static void fillCircle(ImVec2 center, float radius, const ImColor& color, float alpha, int segments);
 	static void drawColorPicker(ImVec4& color, ImVec4 canvas_pos);
+	static void fillRoundedRectangle(const ImVec4& pos, const ImColor& color, float radius, float alpha, ImDrawList* list);
 	static ImVec2 getScreenSize();
 	static bool isFullScreen();
 	static float getTextHeightStr(std::string* textStr, float textSize);

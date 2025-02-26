@@ -93,9 +93,8 @@ void D2D::beginRender(IDXGISurface* surface, float fxdpi)
 void D2D::ghostFrameCallback(const ImDrawList* parent_list, const ImDrawCmd* cmd)
 {
     auto data = (GhostCallbackData*)cmd->UserCallbackData;
-    if (data == nullptr) {
+    if (!data)
         return;
-    }
 
     ImGuiIO& io = ImGui::GetIO();
     auto displaySize = io.DisplaySize;
@@ -103,43 +102,83 @@ void D2D::ghostFrameCallback(const ImDrawList* parent_list, const ImDrawCmd* cmd
     auto rect = D2D1::RectU(0, 0, size.width, size.height);
     auto destPoint = D2D1::Point2U(0, 0);
 
-    // Static variables to reduce redundant creation/destruction
+    // Static container for ghost frames and a reusable target bitmap.
     static std::vector<ID2D1Bitmap*> ghostBitmaps;
     static ID2D1Bitmap* targetBitmap = nullptr;
     static D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(sourceBitmap->GetPixelFormat());
 
-    if (targetBitmap == nullptr) {
+    // Ensure the target bitmap exists.
+    if (!targetBitmap) {
         d2dDeviceContext->CreateBitmap(size, props, &targetBitmap);
     }
-
-    // Copy the current render target to a bitmap
+    // Copy the current render target into our target bitmap.
     targetBitmap->CopyFromBitmap(&destPoint, sourceBitmap.get(), &rect);
 
     int maxFrames = data->maxFrames;
-    
-    // Ensure the number of frames does not exceed maxFrames
-    while (ghostBitmaps.size() >= maxFrames) {
-        auto bitmap = ghostBitmaps.front();
+    // Remove the oldest frame if we exceed our maximum.
+    while (ghostBitmaps.size() >= (size_t)maxFrames) {
+        auto bmp = ghostBitmaps.front();
         ghostBitmaps.erase(ghostBitmaps.begin());
-        bitmap->Release();
+        bmp->Release();
+    }
+    // Create a new ghost bitmap for this frame.
+    ID2D1Bitmap* newGhost = nullptr;
+    d2dDeviceContext->CreateBitmap(size, props, &newGhost);
+    newGhost->CopyFromBitmap(&destPoint, sourceBitmap.get(), &rect);
+    ghostBitmaps.push_back(newGhost);
+
+    // Compute weights for each stored frame using an exponential decay.
+    // Newer frames have more weight; older ones fade out.
+    const int numFrames = ghostBitmaps.size();
+    float totalWeight = 0.0f;
+    std::vector<float> weights(numFrames, 0.0f);
+    // The decay factor can be tied to data->strength (e.g. higher intensity makes older frames fade faster).
+    const float decay = data->strength; // For example, 0.9f
+    for (int i = 0; i < numFrames; i++) {
+        // Use index 0 for the oldest frame and index (numFrames - 1) for the most recent.
+        float weight = pow(decay, float(numFrames - 1 - i));
+        weights[i] = weight;
+        totalWeight += weight;
+    }
+    // Normalize weights so their sum is 1.
+    for (int i = 0; i < numFrames; i++) {
+        weights[i] /= totalWeight;
     }
 
-    // Create and copy a new ghost bitmap
-    ID2D1Bitmap* ghostBitmap = nullptr;
-    d2dDeviceContext->CreateBitmap(size, props, &ghostBitmap);
-    ghostBitmap->CopyFromBitmap(&destPoint, sourceBitmap.get(), &rect);
-    ghostBitmaps.push_back(ghostBitmap);
+    // Save the current transform.
+    D2D1_MATRIX_3X2_F originalTransform;
+    d2dDeviceContext->GetTransform(&originalTransform);
 
+    // Optionally, you could add a slight per-frame offset to simulate directional motion.
+    // Here we allow a small horizontal offset that increases with the age of the ghost frame.
+    const float offsetMultiplier = 2.0f; // tweak this value to control offset magnitude
 
-    // Draw the ghost frames
-    float alpha = 0.3f * data->strength;
-    for (auto& ghostBitmap : ghostBitmaps) {
-        d2dDeviceContext->DrawBitmap(ghostBitmap, D2D1::RectF(0, 0, displaySize.x, displaySize.y), alpha, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-        alpha *= data->strength;
+    // Composite each ghost frame.
+    for (int i = 0; i < numFrames; i++) {
+        // Compute a small offset: older frames are shifted slightly more.
+        float offsetX = -offsetMultiplier * (numFrames - 1 - i);
+        float offsetY = 0.0f; // change if you want vertical offset as well
+
+        // Apply a translation for this ghost frame.
+        D2D1::Matrix3x2F translation = D2D1::Matrix3x2F::Translation(offsetX, offsetY);
+        d2dDeviceContext->SetTransform(translation * originalTransform);
+
+        // Draw the ghost bitmap with its computed normalized opacity.
+        d2dDeviceContext->DrawBitmap(
+            ghostBitmaps[i],
+            D2D1::RectF(0, 0, displaySize.x, displaySize.y),
+            weights[i],
+            D2D1_BITMAP_INTERPOLATION_MODE_LINEAR
+        );
     }
+    // Restore the original transform.
+    d2dDeviceContext->SetTransform(originalTransform);
 
-    // Free the callback data
-    for (auto it = ghostCallbacks.begin(); it != ghostCallbacks.end(); it++) {
+    // Optional: flush the context if needed.
+    d2dDeviceContext->Flush();
+
+    // Remove the callback data from our ghostCallbacks list.
+    for (auto it = ghostCallbacks.begin(); it != ghostCallbacks.end(); ++it) {
         if (it->get() == data) {
             ghostCallbacks.erase(it);
             break;
@@ -149,16 +188,15 @@ void D2D::ghostFrameCallback(const ImDrawList* parent_list, const ImDrawCmd* cmd
 
 void D2D::addGhostFrame(ImDrawList* drawList, int maxFrames, float strength)
 {
-    if (!initD2D) {
+    if (!initD2D)
         return;
-    }
 
     auto uniqueData = std::make_shared<GhostCallbackData>(strength, maxFrames);
     auto data = uniqueData.get();
     ghostCallbacks.push_back(uniqueData);
     drawList->AddCallback(ghostFrameCallback, data);
-
 }
+
 
 void D2D::endRender()
 {
@@ -276,22 +314,22 @@ void SafeRelease(T** ptr) {
         *ptr = nullptr;
     }
 }
-
 void D2D::blurCallbackOptimized(const ImDrawList* parent_list, const ImDrawCmd* cmd) {
     auto data = (BlurCallbackData*)cmd->UserCallbackData;
-    if (data == nullptr) {
+    if (!data)
         return;
-    }
 
     ImGuiIO& io = ImGui::GetIO();
+    // Use the provided clip rectangle or fallback to the command’s clip rect.
     ImVec4 clipRect = data->clipRect.has_value() ? *data->clipRect : cmd->ClipRect;
 
-
+    // Ensure our cached bitmap matches the current render target.
     D2D1_SIZE_U bitmapSize = sourceBitmap->GetPixelSize();
-
-    // Check if the bitmap needs to be created (initialization or size change)
-    if (cachedBitmap == nullptr || cachedBitmap->GetPixelSize().width != bitmapSize.width || cachedBitmap->GetPixelSize().height != bitmapSize.height) {
-        SafeRelease(&cachedBitmap); // Ensure previous bitmap is released
+    if (!cachedBitmap ||
+        cachedBitmap->GetPixelSize().width != bitmapSize.width ||
+        cachedBitmap->GetPixelSize().height != bitmapSize.height)
+    {
+        SafeRelease(&cachedBitmap);
         D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(sourceBitmap->GetPixelFormat());
         d2dDeviceContext->CreateBitmap(bitmapSize, props, &cachedBitmap);
         auto destPoint = D2D1::Point2U(0, 0);
@@ -299,11 +337,12 @@ void D2D::blurCallbackOptimized(const ImDrawList* parent_list, const ImDrawCmd* 
         cachedBitmap->CopyFromBitmap(&destPoint, sourceBitmap.get(), &rect);
     }
 
-    // Only recreate the clip rect geometry if the clipRect or rounding has changed
+    // Recreate the clip geometry if needed.
     static ImVec4 cachedClipRect;
     static float cachedRounding = -1.0f;
-    if (cachedClipRectGeo == nullptr || cachedClipRect != clipRect || cachedRounding != data->rounding) {
-        SafeRelease(&cachedClipRectGeo); // Release previous geometry
+    if (!cachedClipRectGeo || cachedClipRect != clipRect || cachedRounding != data->rounding)
+    {
+        SafeRelease(&cachedClipRectGeo);
         cachedClipRect = clipRect;
         cachedRounding = data->rounding;
 
@@ -312,29 +351,68 @@ void D2D::blurCallbackOptimized(const ImDrawList* parent_list, const ImDrawCmd* 
         d2dFactory->CreateRoundedRectangleGeometry(clipRectRounded, &cachedClipRectGeo);
     }
 
-    // Reuse the image brush if possible
-    if (cachedBrush == nullptr) {
+    // Reuse (or create) the image brush that holds the blurred image.
+    if (!cachedBrush)
+    {
         ID2D1Image* outImage = nullptr;
         blurEffect->SetInput(0, cachedBitmap);
         blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, data->strength);
         blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD);
         blurEffect->GetOutput(&outImage);
 
-        D2D1_IMAGE_BRUSH_PROPERTIES brushProps = D2D1::ImageBrushProperties(D2D1::RectF(0, 0, io.DisplaySize.x, io.DisplaySize.y));
+        D2D1_IMAGE_BRUSH_PROPERTIES brushProps = D2D1::ImageBrushProperties(
+            D2D1::RectF(0, 0, io.DisplaySize.x, io.DisplaySize.y));
         d2dDeviceContext->CreateImageBrush(outImage, brushProps, &cachedBrush);
-
-        SafeRelease(&outImage); // Release image after use
+        SafeRelease(&outImage);
     }
 
-    ID2D1Image* originalTarget = nullptr;
-    d2dDeviceContext->GetTarget(&originalTarget);
+    // Save the current transform.
+    D2D1_MATRIX_3X2_F originalTransform;
+    d2dDeviceContext->GetTransform(&originalTransform);
 
-    d2dDeviceContext->SetTarget(sourceBitmap.get());
-    d2dDeviceContext->FillGeometry(cachedClipRectGeo, cachedBrush);
-    d2dDeviceContext->SetTarget(originalTarget);
-    SafeRelease(&originalTarget);
+    // --- Enhanced Motion Blur ---
+    // We'll composite several samples of the blurred image with a horizontal offset.
+    // Adjust these values to fine-tune the effect.
+    const int numSamples = 5;                    // Number of samples for the motion blur
+    float motionMagnitude = data->strength * 10.0f; // Scale factor for offset magnitude
+
+    // Loop over several samples.
+    for (int i = 0; i < numSamples; i++)
+    {
+        // Normalize sample index to [0, 1].
+        float t = (float)i / (numSamples - 1);
+        // Compute an offset that ranges from -motionMagnitude/2 to +motionMagnitude/2.
+        float offsetX = (t - 0.5f) * motionMagnitude;
+        // Weight peaks at the center (t=0.5) and falls off at the edges.
+        float weight = 1.0f - fabs(t - 0.5f) * 2.0f;
+
+        // Push a layer with the desired opacity.
+        D2D1_LAYER_PARAMETERS layerParams = D2D1::LayerParameters(
+            D2D1::RectF(clipRect.x, clipRect.y, clipRect.z, clipRect.w),
+            nullptr,
+            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+            D2D1::Matrix3x2F::Identity(),
+            weight,
+            nullptr,
+            D2D1_LAYER_OPTIONS_NONE);
+        d2dDeviceContext->PushLayer(&layerParams, nullptr);
+
+        // Set a translation transform for this sample.
+        D2D1::Matrix3x2F translation = D2D1::Matrix3x2F::Translation(offsetX, 0.0f);
+        d2dDeviceContext->SetTransform(translation * originalTransform);
+
+        // Draw the blurred image using the cached clip geometry.
+        d2dDeviceContext->FillGeometry(cachedClipRectGeo, cachedBrush);
+
+        d2dDeviceContext->PopLayer();
+    }
+
+    // Restore the original transform.
+    d2dDeviceContext->SetTransform(originalTransform);
+
     d2dDeviceContext->Flush();
 }
+
 
 
 bool D2D::addBlurOptimized(ImDrawList* drawList, float strength, std::optional<ImVec4> clipRect, float rounding)
