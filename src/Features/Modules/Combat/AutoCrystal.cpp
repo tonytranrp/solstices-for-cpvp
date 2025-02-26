@@ -180,7 +180,7 @@ std::vector<AutoCrystal::PlacePosition> AutoCrystal::findPlacePositions(const st
     float closestDist = std::numeric_limits<float>::max();
     for (auto* actor : runtimeActors) {
         // Skip self, invalid actors, and crystals.
-        if (actor == player || !actor->isValid() || actor->getActorTypeComponent()->mType == ActorType::EnderCrystal)
+        if (actor == player || !actor->isValid() || !actor->isPlayer())
             continue;
         float dist = glm::distance(*actor->getPos(), *player->getPos());
         if (dist > mRange.mValue)
@@ -302,17 +302,6 @@ std::vector<AutoCrystal::BreakTarget> AutoCrystal::findBreakTargets(const std::v
         float targetDmg = calculateDamage(BlockPos(actor->getPos()->x, actor->getPos()->y, actor->getPos()->z), player);
         if (targetDmg < mMinimumDamage.mValue)
             continue;
-
-        // If "Break Own" is enabled, only consider crystals near our last placed position.
-        if (mBreakOnlyOwn.mValue) {
-            if (!mHasPlacedCrystal)
-                continue; // We haven't placed a crystal yet.
-            glm::vec3 placedCenter(mLastPlacedPos.x + 0.5f, mLastPlacedPos.y + 1.0f, mLastPlacedPos.z + 0.5f);
-            glm::vec3 crystalCenter = *actor->getPos(); // Assuming the actor position is its center.
-            if (glm::distance(placedCenter, crystalCenter) > 1.0f)
-                continue;
-        }
-
         // Self damage can be set to 0.f here (or calculate if needed).
         breakTargets.emplace_back(actor, targetDmg, 0.f);
     }
@@ -360,10 +349,6 @@ void AutoCrystal::placeCrystal(const PlacePosition& pos) {
 
     player->getGameMode()->buildBlock(pos.position, randomFrom(0, 5), false);
     mLastPlace = NOW;
-
-    // Record the placement position and set our flag.
-    mLastPlacedPos = pos.position;
-    mHasPlacedCrystal = true;
 }
 /**
  * @brief Breaks a crystal if it meets all conditions.
@@ -386,13 +371,6 @@ void AutoCrystal::breakCrystal(Actor* crystal) {
     if (distance > mPlaceRange.mValue)
         return; // Crystal is out of break range.
 
-    // If "Break Own" is enabled, ensure the crystal is near our placed position.
-    if (mBreakOnlyOwn.mValue && mHasPlacedCrystal) {
-        glm::vec3 placedCenter(mLastPlacedPos.x + 0.5f, mLastPlacedPos.y + 1.0f, mLastPlacedPos.z + 0.5f);
-        glm::vec3 crystalCenter = *crystal->getPos();
-        if (glm::distance(placedCenter, crystalCenter) > 1.0f)
-            return;
-    }
 
     if (!mIdPredict.mValue) {
         if (mSwitchMode.mValue == SwitchMode::Silent && mShouldSpoofSlot) {

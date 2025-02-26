@@ -1,6 +1,6 @@
 
 #pragma once
-/*//
+//
 // Created by jcazm on 7/27/2024.
 //
 #include <Features/Modules/Module.hpp>
@@ -29,10 +29,12 @@ public:
             {NormalSpaced, "Item Physics"}
         };
     }
-    static void glm_rotate(glm::mat4x4& mat, float angle, float x, float y, float z);
+    static ItemPhysics* s_instance;
+
+    void glm_rotate(glm::mat4x4& mat, float angle, float x, float y, float z);
     void onEnable() override;
     void onDisable() override;
     void onRenderEvent(class RenderEvent& event);
     void onItemRendererEvent(class ItemRendererEvent& event);
 };
-*/
+

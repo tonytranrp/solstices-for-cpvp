@@ -299,7 +299,7 @@ void ModuleManager::init()
 
     mModules.emplace_back(std::make_shared<AutoKick>()); // LMAO
 
-    //mModules.emplace_back(std::make_shared<ItemPhysics>());
+   // mModules.emplace_back(std::make_shared<ItemPhysics>());
     mModules.emplace_back(std::make_shared<VoiceChat>());
     mModules.emplace_back(std::make_shared<BoneEsp>());
     mModules.emplace_back(std::make_shared<CustomChat>());
