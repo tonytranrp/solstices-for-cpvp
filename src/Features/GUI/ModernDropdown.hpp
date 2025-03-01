@@ -19,6 +19,7 @@
 #include <Features/GUI/Settings/NumberSettingRenderer.hpp>
 #include <Features/GUI/Settings/ColorSettingRenderer.hpp>
 #include <Features/GUI/Settings/BoolSettingRenderer.hpp>
+#include <Features/GUI/Settings/MultiSelectSettingRenderer.hpp>
 //
 // Created by Tozic 7/15/2024.
 //

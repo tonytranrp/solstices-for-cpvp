@@ -15,7 +15,8 @@ enum class SettingType
     Enum,
     Color,
     String,
-    Keybind
+    Keybind,
+    MultiSelect
 };
 
 class Setting
@@ -186,6 +187,32 @@ public:
         return static_cast<T>(mValue);
     }
 };
+class MultiSelectSetting : public Setting {
+public:
+    std::vector<std::string> mValues;   // All possible options
+    std::vector<bool> mSelected;       // Parallel array: true if option selected
+    bool menuOpen = false;             // 🆕 Controls if the selection menu is open
+    int selectedIndexLeft = -1;        // Selected index in the left list (Available)
+    int selectedIndexRight = -1;       // Selected index in the right list (Chosen)
+
+    MultiSelectSetting(std::string name, std::string desc, std::vector<std::string> options)
+        : Setting(std::move(name), std::move(desc), SettingType::MultiSelect),
+        mValues(std::move(options)),
+        mSelected(mValues.size(), false),
+        menuOpen(false) {
+    }  // Initialize menu as closed
+
+// (Optional) Serialization for future persistence
+    nlohmann::json serialize() override {
+        nlohmann::json j = Setting::serialize();
+        j["selectedItems"] = nlohmann::json::array();
+        for (size_t i = 0; i < mValues.size(); i++) {
+            if (mSelected[i]) j["selectedItems"].push_back(mValues[i]);
+        }
+        return j;
+    }
+};
+
 
 // EnumSetting, but the mValue is a custom type (should always be an enum)
 template <typename T>

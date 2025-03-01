@@ -359,6 +359,34 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                                 );
                                 break;
                             }
+                            case SettingType::MultiSelect: {
+                                auto multiSetting = reinterpret_cast<MultiSelectSetting*>(setting);
+                                MultiSelectSettingRenderer::render(
+                                    multiSetting,
+                                    modRect,
+                                    catRect,
+                                    catPositions[i].y,   // catY
+                                    catHeight,
+                                    moduleY,
+                                    setPadding,
+                                    modHeight,
+                                    animation,
+                                    inScale,
+                                    screen.y / 2,       // screenHalfY
+                                    textHeight,
+                                    textSize,
+                                    isEnabled,
+                                    lowercase,
+                                    mod->cAnim,
+                                    tooltip,
+                                    radius,
+                                    displayColorPicker,
+                                    mod->showSettings
+                                );
+                                break;
+                            }
+
+
 
                             case SettingType::Number:
                             {

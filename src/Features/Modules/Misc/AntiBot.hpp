@@ -22,6 +22,11 @@ public:
         Full,
         OneElement
     };
+    MultiSelectSetting mEntityFilter = MultiSelectSetting(
+        "Entity Filter",
+        "Select which entities to filter out.",
+        { "Cows", "Chickens", "Dolphins", "Zombies", "Skeletons", "Enderman" }
+    );
 
     EnumSettingT<Mode> mMode = EnumSettingT<Mode>("Mode", "The mode of the AntiBot module.", Mode::Simple, "Simple", "Custom");
     EnumSettingT<EntitylistMode> mEntitylistMode = EnumSettingT<EntitylistMode>("Entitylist Mode", "The mode of the entity list.\nEntt View: Use if you have any issues with actors not showing up\nRuntime Actor List: Use if you have stability issues", EntitylistMode::RuntimeActorList, "Entt View", "Level");
@@ -33,8 +38,9 @@ public:
     BoolSetting mHasArmorCheck = BoolSetting("Has Armor Check", "Whether or not to check if the entity has armor", false);
     EnumSettingT<ArmorMode> mArmorMode = EnumSettingT<ArmorMode>("Armor Mode", "The mode of the armor check.", ArmorMode::Full, "Full", "One Element");
 
+
     AntiBot() : ModuleBase("AntiBot", "Filters out bots from the entity list", ModuleCategory::Misc, 0, true) {
-        addSettings(&mMode, &mEntitylistMode, &mHitboxCheck, &mPlayerCheck, &mInvisibleCheck, &mNameCheck, &mPlayerListCheck, &mHasArmorCheck, &mArmorMode);
+        addSettings(&mEntityFilter,&mMode, &mEntitylistMode, &mHitboxCheck, &mPlayerCheck, &mInvisibleCheck, &mNameCheck, &mPlayerListCheck, &mHasArmorCheck, &mArmorMode);
 
         VISIBILITY_CONDITION(mHitboxCheck, mMode.mValue == Mode::Custom);
         VISIBILITY_CONDITION(mPlayerCheck, mMode.mValue == Mode::Custom);
