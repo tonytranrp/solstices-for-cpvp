@@ -210,7 +210,7 @@ private:
     std::vector<BreakTarget> findBreakTargets(const std::vector<Actor*>& runtimeActors);
     void placeCrystal(const PlacePosition& pos);
     void breakCrystal(Actor* crystal);
-    std::vector<PlacePosition> getPlacement(const std::vector<Actor*>& runtimeActors);
+    std::vector<PlacePosition> getplacmenet(const std::vector<Actor*>& runtimeActors);
     std::vector<PlacePosition> mPossiblePlacements;
     uint64_t mLastPlace = 0;
     uint64_t mLastsearchPlace = 0;

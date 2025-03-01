@@ -239,68 +239,59 @@ void Solstice::init(HMODULE hModule)
     mThread.detach();
 }
 
-#include <Windows.h> // Needed for GetAsyncKeyState
-
-void Solstice::shutdownThread() {
-    // This thread runs until mRequestEject is true.
+void Solstice::shutdownThread()
+{
+    // Wait for the user to press END
     bool firstCall = true;
     bool isLpValid = false;
-    while (!mRequestEject) {
-        // --- Hotkey detection ---
-        // Check if CTRL+L is pressed:
-        if ((GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState('L') & 0x8000)) {
-            console->info("CTRL+L detected: initiating shutdown.");
-            mRequestEject = true;
-        }
-        // Alternatively, check if the END key is pressed:B
-        if (GetAsyncKeyState(VK_END) & 0x8000) {
-            console->info("END key detected: initiating shutdown.");
-            mRequestEject = true;
-        }
-        // -----------------------
-
-        if (firstCall) {
-            // This runs only once—displaying initial notifications and checking for updates.
+    while (!mRequestEject)
+    {
+        if (firstCall)
+        {
             NotifyUtils::notify("Solstice initialized!", 5.0f, Notification::Type::Info);
             firstCall = false;
 
-            std::string latestHash = OAuthUtils::getLatestCommitHash();
-            if (latestHash == xorstr_("403")) {
-                // Handle error as needed.
+            std::string latestHash;
+            latestHash = OAuthUtils::getLatestCommitHash();
+
+            if (latestHash == xorstr_("403"))
+            {
+               /// __fastfail(1);
             }
-            else if (!latestHash.empty()) {
-                if (latestHash != SOLSTICE_BUILD_VERSION) {
+            else if (!latestHash.empty())
+            {
+                if (latestHash != SOLSTICE_BUILD_VERSION)
+                {
                     console->warn("Solstice is out of date! Latest commit: {}", latestHash);
-                    NotifyUtils::notify(
-                        "There is a new version of Solstice available!\nIt is recommended to update.",
-                        10.0f,
-                        Notification::Type::Warning
-                    );
+                    NotifyUtils::notify("There is a new version of Solstice available!\nIt is recommended to update.", 10.0f, Notification::Type::Warning);
                     ChatUtils::displayClientMessage("§aThere is a new version of Solstice available! Download it from the Discord server.");
                 }
                 else {
                     console->info("Solstice is up to date!");
                 }
             }
-            else {
-                // Optionally handle an empty hash here.
+            else if (latestHash.empty())
+            {
+               // __fastfail(1);
             }
         }
 
-        // Once the local player becomes available, perform one‑time initialization tasks.
-        if (!isLpValid && ClientInstance::get()->getLocalPlayer()) {
+        if (!isLpValid && ClientInstance::get()->getLocalPlayer())
+        {
             isLpValid = true;
             HookManager::init(true); // Initialize the base tick hook
 
             auto ircModule = gFeatureManager->mModuleManager->getModule<IRC>();
-            if (ircModule && !ircModule->mEnabled)
-                ircModule->toggle();
+            if (ircModule && !ircModule->mEnabled) ircModule->toggle();
 
-            if (!Prefs->mDefaultConfigName.empty()) {
-                if (ConfigManager::configExists(Prefs->mDefaultConfigName)) {
+            if (!Prefs->mDefaultConfigName.empty())
+            {
+                if (ConfigManager::configExists(Prefs->mDefaultConfigName))
+                {
                     ConfigManager::loadConfig(Prefs->mDefaultConfigName);
                 }
-                else {
+                else
+                {
                     console->warn("Default config does not exist! Clearing default config...");
                     NotifyUtils::notify("Default config does not exist! Clearing default config...", 10.0f, Notification::Type::Warning);
                     Prefs->mDefaultConfigName = "";
@@ -312,28 +303,28 @@ void Solstice::shutdownThread() {
             }
         }
 
-        // Update our patch/hook status and tick the module manager.
         patchInHandSlot(ClientInstance::get()->getLocalPlayer() != nullptr);
+
         mLastTick = NOW;
         gFeatureManager->mModuleManager->onClientTick();
-
-        // Sleep briefly to reduce CPU usage.
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    // --- Shutdown procedure begins here ---
-
-    // Mark as requested and update the window title.
     mRequestEject = true;
+
     setTitle("");
+
     patchInHandSlot(false);
 
-    // Shutdown hooks, modules, etc.
     HookManager::shutdown();
+
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
     gFeatureManager->shutdown();
 
+    // Shutdown
     console->warn("Shutting down...");
+
     ClientInstance::get()->getMinecraftGame()->playUi("beacon.deactivate", 1, 1.0f);
     ClientInstance::get()->getGuiData()->displayClientMessage("§asolstice§7 » §cEjected!");
 
@@ -341,9 +332,9 @@ void Solstice::shutdownThread() {
     SigManager::deinitialize();
     OffsetProvider::deinitialize();
 
-    // Pause briefly to allow the user to read any final messages.
-    Sleep(1000);
+    // wait for threads to finish
+    Sleep(1000); // Give the user time to read the message
 
     Logger::deinitialize();
-    FreeLibrary(mModule);
+    FreeLibrary(mModule); // i don't understand this
 }
