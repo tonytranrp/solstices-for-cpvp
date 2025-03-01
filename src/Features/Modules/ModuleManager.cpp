@@ -75,6 +75,7 @@
 #include "Movement/Speed.hpp"
 #include "Movement/Spider.hpp"
 #include "Movement/Sprint.hpp"
+#include "Movement/Birdi.hpp"
 #include "Movement/Step.hpp"
 #include "Movement/TargetStrafe.hpp"
 #include "Movement/Velocity.hpp"
@@ -165,6 +166,7 @@ void ModuleManager::init()
 
     // Movement
     mModules.emplace_back(std::make_shared<Fly>());
+    mModules.emplace_back(std::make_shared<Birdi>());
     mModules.emplace_back(std::make_shared<Velocity>());
     mModules.emplace_back(std::make_shared<NoSlowDown>());
     mModules.emplace_back(std::make_shared<AntiImmobile>());

@@ -6,6 +6,7 @@
 
 #include <Solstice.hpp>
 #include <Features/Modules/Visual/ClickGui.hpp>
+#include <Features/Modules/Movement/Birdi.hpp>
 #include <Features/Events/KeyEvent.hpp>
 #include <SDK/Minecraft/ClientInstance.hpp>
 #include <Features/GUI/ModernDropdown.hpp>
@@ -138,7 +139,15 @@ void KeyHook::onKey(uint32_t key, bool isDown)
 
     // Flag to indicate if this key event was consumed by binding logic.
     bool bindingConsumed = false;
-
+   /* const auto* Birdies = gFeatureManager->mModuleManager->getModule<Birdi>();
+    if (key == VK_SPACE && isDown && Birdies->mEnabled) {
+        Birdi::isjumping = true;
+        oFunc(key, isDown);
+        return;
+    }
+    else {
+        Birdi::isjumping = true;
+    }*/
     // If we're in key-binding mode and a key is pressed, update the binding.
     if (ModernGui::isKeybindBinding && ModernGui::lastKeybindSetting && isDown) {
         int newKey = (key == VK_ESCAPE) ? 0 : key;

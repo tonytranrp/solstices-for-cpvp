@@ -99,7 +99,17 @@ public:
     };
 
     static inline std::unordered_map<int, bool> mPressedKeys;
+    static bool IsUsingThisKey(int Keyid) 
+    {
+        for (auto [key, presses] : mPressedKeys) {
+            if (key == Keyid && presses) {
+                return true;
+            }
+            return false;
+        }
+        
 
+    }
     static int getKeyId(const std::string& str);
     static bool isUsingMoveKeys(bool includeSpaceShift = false);
     static bool isStrafing();
