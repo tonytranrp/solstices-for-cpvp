@@ -238,48 +238,51 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                     modRect.y = std::floor(modRect.y);
                     modRect.x = std::floor(modRect.x);
 
-                    // Animate the setting animation percentage
+                    // Animate the setting-animation percentage for this module.
                     float targetAnim = mod->showSettings ? 1.f : 0.f;
-                    mod->cAnim = MathUtils::animate(targetAnim, mod->cAnim, ImRenderUtils::getDeltaTime() * 12.5);
+                    mod->cAnim = MathUtils::animate(targetAnim, mod->cAnim, ImRenderUtils::getDeltaTime() * 12.5f);
                     mod->cAnim = MathUtils::clamp(mod->cAnim, 0.f, 1.f);
 
-                    // Settings
-                    if (mod->cAnim > 0.001)
+                    // Only render settings if cAnim is greater than a small threshold (to avoid 'sticking').
+                    if (mod->cAnim > 0.001f)
                     {
                         static bool wasDragging = false;
                         Setting* lastDraggedSetting = nullptr;
+
                         int sIndex = 0;
-                        for (const auto& setting : mod->mSettings)
+                        for (auto& setting : mod->mSettings)
                         {
-                            if (!setting->mIsVisible())
-                            {
-                                //Reset the animation if the setting is not visible
-                                setting->sliderEase = 0;
-                                setting->enumSlide = 0;
+                            // If the setting is hidden, reset its animations and skip it.
+                            if (!setting->mIsVisible()) {
+                                setting->sliderEase = 0.f;
+                                setting->enumSlide = 0.f;
                                 continue;
                             }
 
+                            // Example corner rounding logic
                             float radius = 0.f;
-                            if (endMod && sIndex == mod->mSettings.size() - 1)
+                            bool isLastSetting = (sIndex == (mod->mSettings.size() - 1));
+                            if (endMod && isLastSetting) {
+                                // If it’s the last setting in the entire category
                                 radius = 15.f;
-                            else if (endMod)
+                            }
+                            else if (endMod) {
                                 radius = 15.f * (1.f - mod->cAnim);
+                            }
 
-
-
-                            bool endSetting = sIndex == mod->mSettings.size() - 1;
+                            // Possibly add or remove some bottom padding on the final setting row
+                            bool endSetting = (sIndex == mod->mSettings.size() - 1);
                             float setPadding = endSetting ? (-2.f * animation) : 0.f;
 
+                            // Example for color alpha = module’s cAnim * GUI animation
                             ImColor rgb = ColorUtils::getThemedColor(moduleY * 2);
-                            // Base the alpha off the animation percentage
-                            rgb.Value.w = animation;
-                            switch (setting->mType)
+                            rgb.Value.w = animation * mod->cAnim;
 
+                            // Normal switch by SettingType
+                            switch (setting->mType)
                             {
                             case SettingType::Bool: {
-                                BoolSetting* boolSetting = reinterpret_cast<BoolSetting*>(setting);
-                                // Assume 'lowercase' is already determined.
-                                // Pass catPositions[i].y as catY, and catHeight, modRect, etc., accordingly.
+                                auto boolSetting = reinterpret_cast<BoolSetting*>(setting);
                                 BoolSettingRenderer::render(
                                     boolSetting,
                                     modRect,
@@ -298,21 +301,20 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                                     tooltip,
                                     displayColorPicker,
                                     radius,
-                                    mod->cAnim,                 // module animation factor
-                                    /* indicatorColor */ ColorUtils::getThemedColor(modRect.y), // or another suitable themed color
+                                    mod->cAnim,
+                                    ColorUtils::getThemedColor(modRect.y),
                                     lastBoolSetting,
                                     isBoolSettingBinding
                                 );
                                 break;
                             }
-
                             case SettingType::Keybind:
                             {
-                                KeybindSetting* keybindSetting = reinterpret_cast<KeybindSetting*>(setting);
+                                auto keybindSetting = reinterpret_cast<KeybindSetting*>(setting);
                                 KeybindSettingRenderer::render(
                                     keybindSetting,
                                     modRect,
-                                    catPositions[i].y,          // catY
+                                    catPositions[i].y,
                                     catHeight,
                                     moduleY,
                                     setPadding,
@@ -327,19 +329,18 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                                     isKeybindBinding,
                                     tooltip,
                                     radius,
-                                    mod->mKey                   // use the module's key
+                                    mod->mKey
                                 );
                                 break;
                             }
-
                             case SettingType::Enum:
                             {
-                                EnumSetting* enumSetting = reinterpret_cast<EnumSetting*>(setting);
+                                auto enumSetting = reinterpret_cast<EnumSetting*>(setting);
                                 EnumSettingRenderer::render(
                                     enumSetting,
                                     modRect,
                                     catRect,
-                                    catPositions[i].y,          // catY
+                                    catPositions[i].y,
                                     catHeight,
                                     moduleY,
                                     setPadding,
@@ -351,7 +352,7 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                                     textSize,
                                     isEnabled,
                                     lowercase,
-                                    mod->cAnim,                 // module animation factor
+                                    mod->cAnim,
                                     tooltip,
                                     radius,
                                     displayColorPicker,
@@ -365,14 +366,14 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                                     multiSetting,
                                     modRect,
                                     catRect,
-                                    catPositions[i].y,   // catY
+                                    catPositions[i].y,
                                     catHeight,
                                     moduleY,
                                     setPadding,
                                     modHeight,
                                     animation,
                                     inScale,
-                                    screen.y / 2,       // screenHalfY
+                                    screen.y / 2,
                                     textHeight,
                                     textSize,
                                     isEnabled,
@@ -385,17 +386,14 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                                 );
                                 break;
                             }
-
-
-
                             case SettingType::Number:
                             {
-                                NumberSetting* numSetting = reinterpret_cast<NumberSetting*>(setting);
+                                auto numSetting = reinterpret_cast<NumberSetting*>(setting);
                                 NumberSettingRenderer::render(
                                     numSetting,
                                     modRect,
                                     catRect,
-                                    catPositions[i].y + catHeight,  // baseY
+                                    catPositions[i].y + catHeight,
                                     modHeight,
                                     setPadding,
                                     animation,
@@ -405,7 +403,7 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                                     textSize,
                                     isEnabled,
                                     lowercase,
-                                    mod->cAnim,   // module animation factor
+                                    mod->cAnim,
                                     moduleY,
                                     midclickRounding,
                                     mod->showSettings,
@@ -416,19 +414,14 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                                 );
                                 break;
                             }
-
-
                             case SettingType::Color:
                             {
-                                // Assume you have local variables for the parameters.
-                                // For example, 'moduleY' is a float holding the current module offset,
-                                // 'baseY' is computed from catPositions[i].y + catHeight, etc.
-                                ColorSetting* colorSetting = reinterpret_cast<ColorSetting*>(setting);
+                                auto colorSetting = reinterpret_cast<ColorSetting*>(setting);
                                 ColorSettingRenderer::render(
                                     colorSetting,
                                     modRect,
                                     catRect,
-                                    catPositions[i].y + catHeight, // baseY
+                                    catPositions[i].y + catHeight,
                                     modHeight,
                                     setPadding,
                                     animation,
@@ -438,7 +431,7 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                                     textSize,
                                     isEnabled,
                                     lowercase,
-                                    mod->cAnim,   // module animation factor
+                                    mod->cAnim,
                                     moduleY,
                                     mod->showSettings,
                                     catPositions[i].isExtended,
@@ -448,13 +441,12 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                                 );
                                 break;
                             }
-
-                            }
+                            } // end switch
 
                             sIndex++;
-                        }
+                        } // end for each setting
+                    } // end if (mod->cAnim > 0.001f)
 
-                    }
 
 
                     if (modRect.y > catRect.y + 0.5f) {
@@ -683,14 +675,19 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
         }
     }
     // --- Begin Search Bar Section ---
+    // --- Begin Search Bar Section ---
     {
-        // Get ImGui IO once.
+        // We define some static variables for animation states:
+        static float searchAnim = 0.0f;       // 0 => fully hidden, 1 => fully visible
+        static float idleTimer = 3.0f;       // Timer before we start hiding the search bar
+        static bool  searchingPreviously = false;
+
         ImGuiIO& io = ImGui::GetIO();
 
-        // If search mode is active, process input characters.
+        // If search mode is active, process typed characters:
         if (isSearching) {
             for (unsigned int c : io.InputQueueCharacters) {
-                // Append only printable characters.
+                // Append only ASCII-printable characters.
                 if (c >= 32 && c < 127) {
                     searchingModule.push_back(static_cast<char>(c));
                 }
@@ -706,12 +703,11 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
             }
         }
 
-        // Get current mouse position.
         ImVec2 mousePos = ImRenderUtils::getMousePos();
-
-        // Define the search region (bottom center of screen).
         const float searchWidth = 400.f;
         const float searchHeight = 40.f;
+
+        // The rectangle in which we consider "hovering" to open the search
         ImVec4 searchRegion(
             screen.x / 2.f - 275.f,
             screen.y / 1.25f,
@@ -719,100 +715,201 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
             screen.y
         );
 
-        // Static state for search animations.
-        static float searchDuration = 1.f;
-        static float closeDuration = 3.f;
+        // If the user’s mouse is inside that region, we show the bar.
+        bool isOverSearchRegion =
+            (mousePos.x >= searchRegion.x && mousePos.x <= searchRegion.z &&
+                mousePos.y >= searchRegion.y && mousePos.y <= searchRegion.w);
 
-        // Adjust appearance based on mouse position.
-        if (mousePos.x >= searchRegion.x && mousePos.x <= searchRegion.z &&
-            mousePos.y >= searchRegion.y && mousePos.y <= searchRegion.w) {
-            // While the mouse is over the search region, animate to fully open (1.0)
-            searchDuration = MathUtils::lerp(searchDuration, 1.f, io.DeltaTime * 10.f);
-            closeDuration = 3.f;
+        // If the user is actively searching, keep it open (searchAnim -> 1).
+        // If the mouse is over the region, open as well.
+        if (isSearching || isOverSearchRegion) {
+            // Animate up to 1.0
+            searchAnim = MathUtils::animate(1.0f, searchAnim, io.DeltaTime * 6.f);
+            // Reset the idle timer
+            idleTimer = 3.0f;
         }
-        else if (!isSearching && searchingModule.empty()) {
-            // After a delay (closeDuration), animate to fully closed (0.0)
-            if (closeDuration < 0.f)
-                searchDuration = MathUtils::lerp(searchDuration, 0.f, io.DeltaTime * 10.f);
-            else
-                closeDuration -= io.DeltaTime;
+        else {
+            // If no text is typed and we’re not searching, we can idle-close
+            if (searchingModule.empty()) {
+                idleTimer -= io.DeltaTime;
+                if (idleTimer <= 0.f) {
+                    searchAnim = MathUtils::animate(0.0f, searchAnim, io.DeltaTime * 6.f);
+                }
+            }
         }
 
-
-        // Compute the search bar rectangle (slides vertically based on searchDuration).
+        // If user clicks inside “type area,” isSearching = true; otherwise false
+        // We'll define the search bar rect next:
+        float verticalSlide = 50.f * searchAnim; // we’ll slide it up/down by 50 px
         ImVec4 searchRectPos(
-            screen.x / 2.f - searchWidth / 2.f,
-            screen.y - searchHeight / 2.f + 10.f - 50.f * searchDuration,
-            screen.x / 2.f + searchWidth / 2.f,
-            screen.y + searchHeight / 2.f + 10.f - 50.f * searchDuration
+            screen.x / 2.f - searchWidth * 0.5f,
+            screen.y - searchHeight * 0.5f + 10.f - verticalSlide,
+            screen.x / 2.f + searchWidth * 0.5f,
+            screen.y + searchHeight * 0.5f + 10.f - verticalSlide
         );
 
-        // Compute the inner "type" area (reserve space for the prompt on the right).
+        // We'll also fade the entire bar in/out by searchAnim:
+        float barAlpha = searchAnim; // if you want a slower fade, you can animate it separately
+
+        // Reserve space on the right for a “Search” prompt
         std::string searchPrompt = "Search ";
         float promptWidth = ImRenderUtils::getTextWidth(&searchPrompt, textSize);
         ImVec4 typeRectPos(
             searchRectPos.x + 5.f,
             searchRectPos.y + 5.f,
-            searchRectPos.z - promptWidth - 10.f,
+            searchRectPos.z - (promptWidth + 10.f),
             searchRectPos.w - 5.f
         );
 
-        // Activate search mode when the mouse clicks inside the type area.
-        if (ModernGui::isMouseOver(typeRectPos) && ImGui::IsMouseClicked(0))
+        // If the user left-clicks in that rectangle, isSearching = true
+        bool isInTypeArea = ModernGui::isMouseOver(typeRectPos);
+        if (isInTypeArea && ImGui::IsMouseClicked(0)) {
             isSearching = true;
-        else if (!ModernGui::isMouseOver(typeRectPos))
+        }
+        // If the user clicks anywhere else, isSearching = false
+        else if (!isInTypeArea && ImGui::IsMouseClicked(0)) {
             isSearching = false;
-
-        // Render search bar background.
-        ImRenderUtils::fillRectangle(searchRectPos, ImColor(29, 29, 29), 1.0f, 7.5f, ImGui::GetBackgroundDrawList(), 0);
-        ImRenderUtils::fillRectangle(typeRectPos, ImColor(21, 21, 21), 1.0f, 7.5f, ImGui::GetBackgroundDrawList(), 0);
-
-        // Draw the search prompt on the right side.
-        ImRenderUtils::drawText(
-            ImVec2(typeRectPos.z + 5.f, typeRectPos.y),
-            searchPrompt, ImColor(255, 255, 255), textSize, 1.0f, false, 0, ImGui::GetForegroundDrawList()
-        );
-
-        // Render search text if present.
-        float currentTextWidth = ImRenderUtils::getTextWidth(&searchingModule, textSize);
-        if (!searchingModule.empty()) {
-            ImDrawList* d = ImGui::GetForegroundDrawList();
-            d->PushClipRect(ImVec2(typeRectPos.x + 5.f, typeRectPos.y), ImVec2(typeRectPos.z - 5.f, typeRectPos.w), true);
-            // Shift text to the left if it overflows.
-            ImVec2 typeTextPos(typeRectPos.x + 5.f, typeRectPos.y + 5.f);
-            if (typeRectPos.x + currentTextWidth > typeRectPos.z - 15.f) {
-                typeTextPos.x -= (typeRectPos.x + currentTextWidth) - (typeRectPos.z - 15.f);
-            }
-            ImRenderUtils::drawText(typeTextPos, searchingModule, ImColor(255, 255, 255), textSize, 1.0f, false, 0, d);
-            d->PopClipRect();
         }
-        else if (!isSearching) {
-            // Show placeholder text when no input.
-            ImRenderUtils::drawText(
-                ImVec2(typeRectPos.x + 5.f, typeRectPos.y + 5.f),
-                "Search for Module :)", ImColor(125, 125, 125), textSize, 1.0f, false, 0, ImGui::GetForegroundDrawList()
+
+        // Now, we only do any rendering if barAlpha > a small threshold:
+        if (barAlpha > 0.01f)
+        {
+            // Optional: blur behind the search bar (just around searchRectPos)
+            // We expand that rect slightly:
+            ImVec4 blurRect = searchRectPos;
+            blurRect.x -= 10.f;   blurRect.y -= 10.f;
+            blurRect.z += 10.f;   blurRect.w += 10.f;
+            // Multiply alpha for partial transparency
+            float blurFactor = 25.f * barAlpha; // set the blur strength (25 is an example)
+            ImRenderUtils::addBlur(blurRect, blurFactor, 0);
+
+            // Fill the background of the search bar
+            // We pass barAlpha as the color alpha multiplier
+            ImColor backgroundColor(29, 29, 29, (int)(255 * barAlpha));
+            ImRenderUtils::fillRectangle(
+                searchRectPos,
+                backgroundColor,
+                barAlpha, // scale factor for corners
+                7.5f,
+                ImGui::GetBackgroundDrawList(),
+                0
             );
-        }
 
-        // Blinking caret animation.
-        static float caretOpacity = 1.f;
-        static bool caretIncreasing = false;
-        if (!caretIncreasing) {
-            caretOpacity -= io.DeltaTime * 2.f;
-            if (caretOpacity < 0.f) { caretOpacity = 0.f; caretIncreasing = true; }
-        }
-        else {
-            caretOpacity += io.DeltaTime * 2.f;
-            if (caretOpacity > 1.f) { caretOpacity = 1.f; caretIncreasing = false; }
-        }
-        ImVec2 caretPos(typeRectPos.x + 5.f + currentTextWidth, typeRectPos.y + 5.f);
-        ImRenderUtils::fillRectangle(
-            ImVec4(caretPos.x, caretPos.y, caretPos.x + 2.f, caretPos.y + textSize),
-            ImColor(255, 255, 255, static_cast<int>(caretOpacity * 255)),
-            1.0f, 0, ImGui::GetForegroundDrawList(), 0
-        );
+            // Fill the “type” sub-rectangle in a slightly darker color
+            ImColor typeRectColor(21, 21, 21, (int)(255 * barAlpha));
+            ImRenderUtils::fillRectangle(
+                typeRectPos,
+                typeRectColor,
+                barAlpha,
+                7.5f,
+                ImGui::GetBackgroundDrawList(),
+                0
+            );
+
+            // Draw the “Search” prompt on the right side
+            float promptX = typeRectPos.z + 5.f;
+            float promptY = typeRectPos.y;
+            ImRenderUtils::drawText(
+                ImVec2(promptX, promptY),
+                searchPrompt,
+                ImColor(255, 255, 255, (int)(255 * barAlpha)),
+                textSize,
+                barAlpha,
+                false,
+                0,
+                ImGui::GetForegroundDrawList()
+            );
+
+            // Render the user’s typed text, if any
+            float currentTextWidth = ImRenderUtils::getTextWidth(&searchingModule, textSize);
+            if (!searchingModule.empty())
+            {
+                ImDrawList* fgDraw = ImGui::GetForegroundDrawList();
+                fgDraw->PushClipRect(
+                    ImVec2(typeRectPos.x + 5.f, typeRectPos.y),
+                    ImVec2(typeRectPos.z - 5.f, typeRectPos.w),
+                    true
+                );
+
+                // Shift text left if overflow
+                ImVec2 typeTextPos(typeRectPos.x + 5.f, typeRectPos.y + 5.f);
+                float rightLimit = typeRectPos.z - 15.f;
+                if (typeTextPos.x + currentTextWidth > rightLimit) {
+                    float overflow = (typeTextPos.x + currentTextWidth) - rightLimit;
+                    typeTextPos.x -= overflow;
+                }
+
+                // White text with alpha
+                ImColor textCol(255, 255, 255, (int)(255 * barAlpha));
+                ImRenderUtils::drawText(
+                    typeTextPos,
+                    searchingModule,
+                    textCol,
+                    textSize,
+                    barAlpha,
+                    false,
+                    0,
+                    fgDraw
+                );
+                fgDraw->PopClipRect();
+            }
+            else if (!isSearching)
+            {
+                // Show placeholder text if we are not searching
+                // (so it disappears if the user is actively typing or focusing)
+                std::string placeholder = "Search for Module :)";
+                ImColor placeholderCol(125, 125, 125, (int)(255 * barAlpha));
+                ImRenderUtils::drawText(
+                    ImVec2(typeRectPos.x + 5.f, typeRectPos.y + 5.f),
+                    placeholder,
+                    placeholderCol,
+                    textSize,
+                    barAlpha,
+                    false,
+                    0,
+                    ImGui::GetForegroundDrawList()
+                );
+            }
+
+            // Render a blinking caret if actively searching
+            // You can skip if you only want caret when isSearching = true
+            if (isSearching)
+            {
+                static float caretOpacity = 1.f;
+                static bool caretIncreasing = false;
+                // Animate caret alpha up & down
+                float caretSpeed = 2.f; // blinking speed
+                if (!caretIncreasing) {
+                    caretOpacity -= io.DeltaTime * caretSpeed;
+                    if (caretOpacity < 0.f) {
+                        caretOpacity = 0.f;
+                        caretIncreasing = true;
+                    }
+                }
+                else {
+                    caretOpacity += io.DeltaTime * caretSpeed;
+                    if (caretOpacity > 1.f) {
+                        caretOpacity = 1.f;
+                        caretIncreasing = false;
+                    }
+                }
+
+                // Draw caret at the end of typed text
+                ImVec2 caretPos(typeRectPos.x + 5.f + currentTextWidth, typeRectPos.y + 5.f);
+                ImColor caretColor(255, 255, 255, (int)(caretOpacity * barAlpha * 255));
+                ImRenderUtils::fillRectangle(
+                    ImVec4(caretPos.x, caretPos.y, caretPos.x + 2.f, caretPos.y + textSize),
+                    caretColor,
+                    1.0f,
+                    0,
+                    ImGui::GetForegroundDrawList(),
+                    0
+                );
+            }
+        } // end if (barAlpha > 0.01f)
     }
     // --- End Search Bar Section ---
+
 
     ImGui::PopFont();
 

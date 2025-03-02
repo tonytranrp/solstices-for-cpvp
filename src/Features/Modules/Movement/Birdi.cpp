@@ -70,20 +70,15 @@ void Birdi::OnKeyEvents(KeyEvent& event) {
     // Handle SPACE for ascending
     if (key == VK_SPACE) {
         if (pressed) {
-            // Start ascending if gliding
             if (haveElytraInArmorSlot && glidingActive && !player->isOnGround()) {
                 isSpacePressed = true;
-                event.setCancelled(true);
+                event.setCancelled(true); // Prevent default space behavior
 
                 ChatUtils::displayClientMessage("Space pressed -> ascending (Elytra flight)");
                 spdlog::debug("[Fly] Space pressed -> ascending (Elytra flight)");
             }
-            else {
-                event.setCancelled(false);
-            }
         }
         else {
-            // Stop ascending
             isSpacePressed = false;
             event.setCancelled(false);
 
@@ -91,16 +86,35 @@ void Birdi::OnKeyEvents(KeyEvent& event) {
             spdlog::debug("[Fly] Space released -> stop ascending");
         }
     }
+
+    // Handle SHIFT (Sneak) for descending
+    else if (key == VK_SHIFT) {
+        if (pressed) {
+            if (haveElytraInArmorSlot && glidingActive && !player->isOnGround()) {
+                isShiftPressed = true;  // New variable to track Shift state
+                event.setCancelled(true); // Prevent sneaking action
+
+                ChatUtils::displayClientMessage("Shift pressed -> descending (Elytra flight)");
+                spdlog::debug("[Fly] Shift pressed -> descending (Elytra flight)");
+            }
+        }
+        else {
+            isShiftPressed = false;
+            event.setCancelled(false);
+
+            ChatUtils::displayClientMessage("Shift released -> stop descending");
+            spdlog::debug("[Fly] Shift released -> stop descending");
+        }
+    }
+
     else {
-        // Don’t cancel other keys
-        event.setCancelled(false);
+        event.setCancelled(false); // Don't interfere with other keys
     }
 }
 void Birdi::OnGlideEvents(ElytraGlideEvent& event) {
     auto player = ClientInstance::get()->getLocalPlayer();
     if (!player) return;
 
-    bool isSneaking = player->getMoveInputComponent()->mIsSneakDown;
     glm::vec3 motion(0.0f);
 
     // Movement input tracking
@@ -142,11 +156,12 @@ void Birdi::OnGlideEvents(ElytraGlideEvent& event) {
     if (isSpacePressed) {
         motion.y += SpeedY.mValue / 10.0f;
     }
-    else if (isSneaking) {
+    else if (isShiftPressed) { // Use our new Shift variable instead of `mIsSneakDown`
         motion.y -= SpeedY.mValue / 10.0f;
     }
 
     event.mVelocity = motion;
+
     ChatUtils::displayClientMessage("[Fly] Setting Elytra glide velocity: {:.3f}, {:.3f}, {:.3f}", motion.x, motion.y, motion.z);
     spdlog::debug("[Fly] Setting Elytra glide velocity: {:.3f}, {:.3f}, {:.3f}", motion.x, motion.y, motion.z);
 }
@@ -264,7 +279,7 @@ void Birdi::onPacketOutEvent(PacketOutEvent& event) const {
                 if (isSpacePressed) {
                     newPitch = -45.0f;  // Looking UP
                 }
-                else if (player->getMoveInputComponent()->mIsSneakDown) {
+                else if (isShiftPressed) {
                     newPitch = 45.0f;  // Looking DOWN
                 }
                 else if (movingHorizontally) {

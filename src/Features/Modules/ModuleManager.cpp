@@ -90,6 +90,7 @@
 #include "Player/ChestStealer.hpp"
 #include "Player/ClickTp.hpp"
 #include "Player/Derp.hpp"
+#include "Player/Fov.hpp"
 #include "Player/Extinguisher.hpp"
 #include "Player/FastMine.hpp"
 #include "Player/Freecam.hpp"
@@ -191,6 +192,7 @@ void ModuleManager::init()
 
     // Player
     mModules.emplace_back(std::make_shared<AutoTotem>());
+    mModules.emplace_back(std::make_shared<Fov>());
     mModules.emplace_back(std::make_shared<AutoSpellBook>());
     mModules.emplace_back(std::make_shared<Timer>());
     mModules.emplace_back(std::make_shared<ChestStealer>());

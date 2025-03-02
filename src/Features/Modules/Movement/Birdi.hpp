@@ -72,6 +72,7 @@ public:
 
     // Internal state flags
     bool  isSpacePressed = false;
+    bool  isShiftPressed = false;
     bool  haveElytraInArmorSlot = false;
     bool  glidingActive = false;
     float accelProgress = 0.0f;

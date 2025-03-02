@@ -1,5 +1,9 @@
 #pragma once
-#include <vector>
+#include <cmath>
+#include <algorithm>
+#include <string>
+#include <sstream>
+#include <iomanip>
 #include <Features/FeatureManager.hpp>
 #include <Features/Modules/Setting.hpp>
 #include <Features/Modules/ModuleCategory.hpp>
@@ -7,7 +11,6 @@
 #include <Utils/FontHelper.hpp>
 #include <Utils/MiscUtils/ImRenderUtils.hpp>
 #include <Utils/MiscUtils/MathUtils.hpp>
-#include <Features/Modules/Setting.hpp>
 #include <Features/Modules/Visual/Interface.hpp>
 #include <SDK/Minecraft/ClientInstance.hpp>
 #include <SDK/Minecraft/Rendering/GuiData.hpp>
@@ -16,183 +19,202 @@
 #include <Utils/MiscUtils/ColorUtils.hpp>
 
 /**
- * @brief Renders a number (slider) setting UI component.
+ * @brief Renders a floating-point slider (NumberSetting) in a clickable UI row.
  *
- * This class encapsulates the slider rendering and dragging logic for a NumberSetting.
+ * Changes & Highlights:
+ * 1) Replaced sprintf_s with a small i/o stream approach for controlling precision.
+ * 2) Merged repetitive logic for reading the mouse X and clamping the new slider value.
+ * 3) Reduced nesting: clearer checks for left-click vs. middle-click dragging.
+ * 4) Comments focused on the big changes, while smaller/obvious parts are left minimal.
  */
 class NumberSettingRenderer {
 public:
-    /**
-     * @brief Renders the number (slider) setting.
-     *
-     * @param numSetting Pointer to the NumberSetting instance to render.
-     * @param modRect The module rectangle.
-     * @param catRect The current category rectangle.
-     * @param baseY The base Y coordinate (typically catPositions[i].y + catHeight).
-     * @param modHeight Height of one module row.
-     * @param setPadding Vertical padding for the setting row.
-     * @param animation Current animation factor.
-     * @param inScale UI scale factor.
-     * @param screenHalfY Half the screen height (e.g. screen.y / 2).
-     * @param textHeight Height of the text.
-     * @param textSize Text size.
-     * @param isEnabled Whether the GUI is enabled.
-     * @param lowercase Whether to convert the setting name to lowercase.
-     * @param moduleCAnim The module’s current animation factor (e.g. mod->cAnim).
-     * @param moduleY In/out: the current vertical offset for this module (will be updated).
-     * @param midclickRounding Rounding factor used when dragging with mouse button 2.
-     * @param showSettings Whether the module’s settings are visible.
-     * @param isExtended Whether the current category is extended.
-     * @param tooltip Out: will be set if the mouse hovers over the slider.
-     * @param radius Corner radius for rounded drawing.
-     * @param lastDraggedSetting In/out: a pointer to the last setting being dragged.
-     */
-    static void render(NumberSetting* numSetting,
-        const ImVec4& modRect,
-        const ImVec4& catRect,
-        float baseY,
-        float modHeight,
-        float setPadding,
-        float animation,
-        float inScale,
-        float screenHalfY,
-        float textHeight,
-        float textSize,
-        bool isEnabled,
-        bool lowercase,
-        float moduleCAnim,
-        float& moduleY,
-        float midclickRounding,
-        bool showSettings,
-        bool isExtended,
-        std::string& tooltip,
-        float radius,
+    static void render(NumberSetting* setting,
+        const ImVec4& moduleRect,
+        const ImVec4& categoryRect,
+        float          baseY,
+        float          rowHeight,
+        float          rowPadding,
+        float          animation,
+        float          uiScale,
+        float          screenHalfY,
+        float          textHeight,
+        float          fontSize,
+        bool           guiEnabled,
+        bool           lowercase,
+        float          moduleAnimFactor,
+        float& currentY,
+        float          midclickRounding,
+        bool           showSettings,
+        bool           categoryExtended,
+        std::string& outTooltip,
+        float          cornerRadius,
         Setting*& lastDraggedSetting)
     {
-        // Retrieve the current value and bounds.
-        const float value = numSetting->mValue;
-        const float minVal = numSetting->mMin;
-        const float maxVal = numSetting->mMax;
+        if (!setting) return;
 
-        // Convert the current value to a string.
-        char buf[10];
-        sprintf_s(buf, "%.2f", value);
-        std::string valueStr(buf);
+        // (1) Current value and slider bounds
+        float curValue = setting->mValue;
+        float minVal = setting->mMin;
+        float maxVal = setting->mMax;
 
-        // Get the setting name, applying lowercase if requested.
-        std::string setName = lowercase ? StringUtils::toLower(numSetting->mName) : numSetting->mName;
+        // (2) Convert the current value to a string with two decimals
+        std::ostringstream valueStream;
+        valueStream << std::fixed << std::setprecision(2) << curValue;
+        std::string valueStr = valueStream.str();
 
-        // Animate the vertical offset for this setting.
-        moduleY = MathUtils::lerp(moduleY, moduleY + modHeight, moduleCAnim);
+        // (3) Possibly lowercase the displayed name
+        std::string displayName = lowercase ? StringUtils::toLower(setting->mName) : setting->mName;
 
-        // Compute the background rectangle for the slider.
-        ImVec4 bgRect = ImVec4(
-            modRect.x,
-            baseY + moduleY,
-            modRect.z,
-            baseY + moduleY + modHeight
-        ).scaleToPoint(ImVec4(modRect.x, screenHalfY, modRect.z, screenHalfY), inScale);
-        bgRect.y = std::max(std::floor(bgRect.y), modRect.y);
+        // (4) Slide the vertical offset (show/hide animations)
+        currentY = MathUtils::lerp(currentY, currentY + rowHeight, moduleAnimFactor);
 
-        // Compute the slider area rectangle with horizontal padding.
-        ImVec4 sliderArea = ImVec4(
-            modRect.x + 7,
-            baseY + moduleY + setPadding,
-            modRect.z - 7,
-            baseY + moduleY + modHeight
-        ).scaleToPoint(ImVec4(modRect.x, screenHalfY, modRect.z, screenHalfY), inScale);
-        sliderArea.y = std::max(std::floor(sliderArea.y), modRect.y);
+        // (5) Main background rectangle for this row
+        ImVec4 bgRect(
+            moduleRect.x,
+            baseY + currentY,
+            moduleRect.z,
+            baseY + currentY + rowHeight
+        );
+        bgRect = bgRect.scaleToPoint(
+            ImVec4(moduleRect.x, screenHalfY, moduleRect.z, screenHalfY), uiScale
+        );
+        bgRect.y = std::max(std::floor(bgRect.y), moduleRect.y);
 
-        // Determine the slider color using a themed color (for example purposes).
-        ImColor sliderColor = ColorUtils::getThemedColor(moduleY * 2);
+        // (6) Slider area with horizontal padding
+        ImVec4 sliderRect(
+            moduleRect.x + 7.f,
+            baseY + currentY + rowPadding,
+            moduleRect.z - 7.f,
+            baseY + currentY + rowHeight
+        );
+        sliderRect = sliderRect.scaleToPoint(
+            ImVec4(moduleRect.x, screenHalfY, moduleRect.z, screenHalfY), uiScale
+        );
+        sliderRect.y = std::max(std::floor(sliderRect.y), moduleRect.y);
 
-        // Animate click feedback.
+        // (7) Color for the slider bar/knob
+        ImColor sliderColor = ColorUtils::getThemedColor(currentY * 2); // example
+
+        // (8) Simple click animation factor (shrinks knob slightly while pressed)
         static float clickAnim = 1.f;
-        if (ImGui::IsMouseDown(0) && ImRenderUtils::isMouseOver(sliderArea))
-            clickAnim = MathUtils::animate(0.60f, clickAnim, ImRenderUtils::getDeltaTime() * 10);
+        bool hoveringSlider = ImRenderUtils::isMouseOver(sliderRect);
+        bool pressingLeft = ImGui::IsMouseDown(0);
+        if (pressingLeft && hoveringSlider)
+            clickAnim = MathUtils::animate(0.6f, clickAnim, ImRenderUtils::getDeltaTime() * 10);
         else
             clickAnim = MathUtils::animate(1.f, clickAnim, ImRenderUtils::getDeltaTime() * 10);
 
-        // Only render the slider if the background is visible.
-        if (bgRect.y > catRect.y + 0.5f)
+        // (9) Only draw if row is visible below category header
+        if (bgRect.y > categoryRect.y + 0.5f)
         {
-            // Render the slider background.
-            ImRenderUtils::fillRectangle(bgRect, ImColor(30, 30, 30), animation, radius,
-                ImGui::GetBackgroundDrawList(), ImDrawFlags_RoundCornersBottom);
+            // Background fill
+            ImRenderUtils::fillRectangle(
+                bgRect, ImColor(30, 30, 30),
+                animation, cornerRadius,
+                ImGui::GetBackgroundDrawList(),
+                ImDrawFlags_RoundCornersBottom
+            );
 
-            // Calculate the slider knob position based on current value.
-            float sliderWidth = sliderArea.z - sliderArea.x;
-            float knobPos = (value - minVal) / (maxVal - minVal) * sliderWidth;
-            numSetting->sliderEase = MathUtils::animate(knobPos, numSetting->sliderEase, ImRenderUtils::getDeltaTime() * 10);
-            numSetting->sliderEase = std::clamp(numSetting->sliderEase, 0.f, sliderArea.z - sliderArea.x);
+            // --- Slider Position Calculation ---
+            float range = maxVal - minVal;
+            float sliderSize = (sliderRect.z - sliderRect.x);
+            float targetPos = (curValue - minVal) / range * sliderSize;
 
-            // --- Slider Dragging Logic ---
-            if (ImRenderUtils::isMouseOver(sliderArea) && isEnabled && isExtended)
+            // Smoothly animate “sliderEase” toward new target
+            setting->sliderEase = MathUtils::animate(
+                targetPos,
+                setting->sliderEase,
+                ImRenderUtils::getDeltaTime() * 10
+            );
+            setting->sliderEase = std::clamp(setting->sliderEase, 0.f, sliderSize);
+
+            // --- Handle Interaction & Dragging ---
+            if (hoveringSlider && guiEnabled && categoryExtended)
             {
-                tooltip = numSetting->mDescription;
+                // Show tooltip on hover
+                outTooltip = setting->mDescription;
+
+                // Start dragging if left/middle mouse is down
                 if (ImGui::IsMouseDown(0) || ImGui::IsMouseDown(2))
                 {
-                    numSetting->isDragging = true;
-                    lastDraggedSetting = numSetting;
+                    setting->isDragging = true;
+                    lastDraggedSetting = setting;
                 }
             }
-            if (ImGui::IsMouseDown(0) && numSetting->isDragging && isEnabled)
-            {
-                if (lastDraggedSetting == numSetting)
-                {
-                    float mouseX = ImRenderUtils::getMousePos().x;
-                    float newVal = ((mouseX - sliderArea.x) / (sliderArea.z - sliderArea.x)) * (maxVal - minVal) + minVal;
-                    numSetting->setValue(std::clamp(newVal, minVal, maxVal));
-                }
-                else {
-                    numSetting->isDragging = false;
-                }
-            }
-            else if (ImGui::IsMouseDown(2) && numSetting->isDragging && isEnabled)
-            {
-                if (lastDraggedSetting == numSetting)
-                {
-                    float mouseX = ImRenderUtils::getMousePos().x;
-                    float newVal = ((mouseX - sliderArea.x) / (sliderArea.z - sliderArea.x)) * (maxVal - minVal) + minVal;
-                    // Apply midclick rounding for precision.
-                    newVal = std::round(newVal / midclickRounding) * midclickRounding;
-                    numSetting->mValue = std::clamp(newVal, minVal, maxVal);
-                }
-                else {
-                    numSetting->isDragging = false;
-                }
-            }
-            else {
-                numSetting->isDragging = false;
-            }
-            // --- End Slider Dragging Logic ---
 
-            // Render slider bar.
-            float sliderBarHeight = sliderArea.w - sliderArea.y;
-            ImVec2 barMin = ImVec2(sliderArea.x, sliderArea.w - sliderBarHeight / 8);
-            ImVec2 barMax = ImVec2(sliderArea.x + (numSetting->sliderEase * inScale), sliderArea.w);
-            barMin.y = barMax.y - 4 * inScale;
-            ImVec4 barRect = ImVec4(barMin.x, barMin.y - 4.5f, barMax.x, barMax.y - 6.5f);
+            // If we’re actually dragging
+            if (setting->isDragging && guiEnabled)
+            {
+                float mouseX = ImRenderUtils::getMousePos().x;
+                float relative = (mouseX - sliderRect.x) / (sliderRect.z - sliderRect.x);
+                float newVal = minVal + std::clamp(relative, 0.f, 1.f) * range;
+
+                // Left-click => normal drag
+                if (ImGui::IsMouseDown(0) && lastDraggedSetting == setting) {
+                    setting->setValue(newVal);
+                }
+                // Middle-click => precise drag with rounding
+                else if (ImGui::IsMouseDown(2) && lastDraggedSetting == setting) {
+                    newVal = std::round(newVal / midclickRounding) * midclickRounding;
+                    setting->mValue = std::clamp(newVal, minVal, maxVal);
+                }
+                // If no relevant mouse button, stop dragging
+                else {
+                    setting->isDragging = false;
+                }
+            }
+
+            // --- Render the “filled bar” and knob ---
+            float barHeight = sliderRect.w - sliderRect.y;
+            ImVec2 barMin = ImVec2(sliderRect.x, sliderRect.w - barHeight / 8.f);
+            ImVec2 barMax = ImVec2(sliderRect.x + (setting->sliderEase * uiScale), sliderRect.w);
+            barMin.y = barMax.y - 4 * uiScale;
+
+            // Bar rect for fillRectangle
+            ImVec4 barRect(barMin.x, barMin.y - 4.5f, barMax.x, barMax.y - 6.5f);
             ImRenderUtils::fillRectangle(barRect, sliderColor, animation, 15);
 
-            // Render slider knob (circle).
-            ImVec2 knobCenter = ImVec2(barRect.z - 2.25f, (barRect.y + barRect.w) / 2);
-            if (value <= minVal + 0.83f)
-                knobCenter.x = barRect.z + 2.25f;
-            ImRenderUtils::fillCircle(knobCenter, 5.5f * clickAnim * animation, sliderColor, animation, 12);
+            // Knob (small circle on the bar)
+            float knobRadius = 5.5f * clickAnim * animation;
+            float knobX = barRect.z - 2.25f;
+            float knobY = (barRect.y + barRect.w) * 0.5f;
+            if (curValue <= (minVal + 0.83f)) // small offset fix
+                knobX = barRect.z + 2.25f;
+            ImRenderUtils::fillCircle(ImVec2(knobX, knobY), knobRadius, sliderColor, animation, 12);
 
-            // Render slider shadow.
-            ImGui::GetBackgroundDrawList()->PushClipRect(ImVec2(barRect.x, barRect.y),
-                ImVec2(barRect.z, barRect.w), true);
-            ImRenderUtils::fillShadowRectangle(barRect, sliderColor, animation * 0.75f, 15.f, 0);
+            // Optional shadow effect behind the bar
+            ImGui::GetBackgroundDrawList()->PushClipRect(
+                ImVec2(barRect.x, barRect.y),
+                ImVec2(barRect.z, barRect.w),
+                true
+            );
+            ImRenderUtils::fillShadowRectangle(
+                barRect, sliderColor,
+                animation * 0.75f, 15.f, 0
+            );
             ImGui::GetBackgroundDrawList()->PopClipRect();
 
-            // Draw slider value text and setting name.
-            float valueTextWidth = ImRenderUtils::getTextWidth(&valueStr, textSize);
-            ImRenderUtils::drawText(ImVec2((bgRect.z - 5.f) - valueTextWidth, bgRect.y + 2.5f),
-                valueStr, ImColor(170, 170, 170), textSize, animation, true);
-            ImRenderUtils::drawText(ImVec2(bgRect.x + 5.f, bgRect.y + 2.5f),
-                setName, ImColor(255, 255, 255), textSize, animation, true);
+            // --- Text: value on the right, setting name on the left ---
+            float valTextW = ImRenderUtils::getTextWidth(&valueStr, fontSize);
+
+            ImRenderUtils::drawText(
+                ImVec2((bgRect.z - 5.f) - valTextW, bgRect.y + 2.5f),
+                valueStr,
+                ImColor(170, 170, 170),
+                fontSize,
+                animation,
+                true
+            );
+
+            ImRenderUtils::drawText(
+                ImVec2(bgRect.x + 5.f, bgRect.y + 2.5f),
+                displayName,
+                ImColor(255, 255, 255),
+                fontSize,
+                animation,
+                true
+            );
         }
     }
 };

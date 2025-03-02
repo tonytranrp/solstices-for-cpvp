@@ -7,6 +7,7 @@
 #include <MinHook.h>
 
 #include "Hooks/ActorHooks/ActorModelHook.hpp"
+#include "Hooks/ActorHooks/GetFovHook.hpp"
 #include "Hooks/ActorHooks/ActorGlideHook.hpp"
 #include "Hooks/ActorHooks/AnimationHooks.hpp"
 #include "Hooks/ActorHooks/NametagRenderHook.hpp"
@@ -15,6 +16,7 @@
 #include "Hooks/ContainerHooks/ContainerScreenControllerHook.hpp"
 #include "Hooks/MiscHooks/FireBlockChangedHook.hpp"
 #include "Hooks/MiscHooks/KeyHook.hpp"
+#include "Hooks/MiscHooks/BoatControlHook.hpp"
 #include "Hooks/MiscHooks/MouseHook.hpp"
 #include "Hooks/MiscHooks/PreGameHook.hpp"
 #include "Hooks/NetworkHooks/ConnectionRequestHook.hpp"
@@ -70,6 +72,8 @@ void HookManager::init(bool initLp)
         ADD_HOOK(PreGameHook);
         ADD_HOOK(NametagRenderHook);
         ADD_HOOK(ActorGlideHook);
+        ADD_HOOK(GetFovHook);
+       // ADD_HOOK(BoatControlHook); dont works idk why breh
        // ADD_HOOK(GameModeStartDestroyHook);  // Add these
        // ADD_HOOK(GameModeStopDestroyHook);   // two hooks
 
