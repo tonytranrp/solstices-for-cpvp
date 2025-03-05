@@ -10,13 +10,20 @@
 void DestroyProgress::onEnable()
 {
     gFeatureManager->mDispatcher->listen<RenderEvent, &DestroyProgress::onRenderEvent>(this);
+    gFeatureManager->mDispatcher->listen<BaseTickEvent, &DestroyProgress::onBaseTickEvent>(this);
+    gFeatureManager->mDispatcher->listen<PacketInEvent, &DestroyProgress::onPacketInEvent>(this);
 }
 
 void DestroyProgress::onDisable()
 {
     gFeatureManager->mDispatcher->deafen<RenderEvent, &DestroyProgress::onRenderEvent>(this);
+    gFeatureManager->mDispatcher->deafen<BaseTickEvent, &DestroyProgress::onBaseTickEvent>(this);
+    gFeatureManager->mDispatcher->deafen<PacketInEvent, &DestroyProgress::onPacketInEvent>(this);
 }
-
+void DestroyProgress::onPacketInEvent(PacketInEvent& event) {
+}
+void DestroyProgress::onBaseTickEvent(BaseTickEvent& event){
+}
 void DestroyProgress::onRenderEvent(RenderEvent& event)
 {
     auto player = ClientInstance::get()->getLocalPlayer();

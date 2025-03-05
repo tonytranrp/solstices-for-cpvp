@@ -1,4 +1,4 @@
-//
+﻿//
 // Created by vastrakai on 6/29/2024.
 //
 
@@ -222,87 +222,93 @@ void D2D::endRender()
 
 
 
-void D2D::blurCallback(const ImDrawList* parent_list, const ImDrawCmd* cmd) {
-    auto data = (BlurCallbackData*)cmd->UserCallbackData;
-    if (data == nullptr) {
+void D2D::blurCallback(const ImDrawList* parentList, const ImDrawCmd* cmd)
+{
+    // Grab our custom data, which has strength, rounding, etc.
+    auto data = reinterpret_cast<BlurCallbackData*>(cmd->UserCallbackData);
+    if (!data || !initD2D)
+        return;
+
+    ImGuiIO& io = ImGui::GetIO();
+    ImVec2 displaySize = io.DisplaySize;
+
+    // 1) Figure out the clip rectangle to use.
+    //    If the user didn't specify one, default to the entire screen area
+    ImVec4 clipRect = data->clipRect.value_or(ImVec4(0, 0, displaySize.x, displaySize.y));
+
+    // 2) Copy the current D2D render target into a temporary bitmap
+    D2D1_SIZE_U srcSize = sourceBitmap->GetPixelSize();
+    D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(sourceBitmap->GetPixelFormat());
+
+    // Create a temporary bitmap to hold the unblurred scene
+    winrt::com_ptr<ID2D1Bitmap> tempBitmap;
+    HRESULT hr = d2dDeviceContext->CreateBitmap(srcSize, props, tempBitmap.put());
+    if (FAILED(hr) || !tempBitmap) {
+        spdlog::error("Failed to create temporary scene bitmap for blur");
         return;
     }
 
-    ImGuiIO& io = ImGui::GetIO();
-    BlurCallbackData* blurData = (BlurCallbackData*)cmd->UserCallbackData;
-    ImVec4 clipRect = data->clipRect.has_value() ? *data->clipRect : cmd->ClipRect;
+    // Copy current scene into tempBitmap
+    D2D1_POINT_2U destPoint = D2D1::Point2U(0, 0);
+    D2D1_RECT_U   sourceRect = D2D1::RectU(0, 0, srcSize.width, srcSize.height);
+    tempBitmap->CopyFromBitmap(&destPoint, sourceBitmap.get(), &sourceRect);
 
-    // Copy the current render target to a bitmap
-    ID2D1Bitmap* targetBitmap = nullptr;
-    D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(sourceBitmap->GetPixelFormat());
-    d2dDeviceContext->CreateBitmap(sourceBitmap->GetPixelSize(), props, &targetBitmap);
-    auto destPoint = D2D1::Point2U(0, 0);
-    auto size = sourceBitmap->GetPixelSize();
-    auto rect = D2D1::RectU(0, 0, io.DisplaySize.x, io.DisplaySize.y);
-    targetBitmap->CopyFromBitmap(&destPoint, sourceBitmap.get(), &rect);
-
-    //Create rects and rounded rects
-    D2D1_RECT_F screenRectF = D2D1::RectF(0, 0, io.DisplaySize.x, io.DisplaySize.y);
-    D2D1_RECT_F clipRectD2D = D2D1::RectF(
-            clipRect.x,
-            clipRect.y,
-            clipRect.z,
-            clipRect.w
-    );
-    D2D1_ROUNDED_RECT clipRectRounded = D2D1::RoundedRect(clipRectD2D, data->rounding, data->rounding);
-
-    //Apply blur effect
-    blurEffect->SetInput(0, targetBitmap);
+    // 3) Set up the built‐in GaussianBlur effect
+    blurEffect->SetInput(0, tempBitmap.get());
     blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, data->strength);
     blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD);
     blurEffect->SetValue(D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION, D2D1_GAUSSIANBLUR_OPTIMIZATION_QUALITY);
 
-    //Get the output image
-    ID2D1Image* outImage = nullptr;
-    blurEffect->GetOutput(&outImage);
+    // 4) Create a geometry for the clip region (rounded rectangle)
+    D2D1_RECT_F   d2dClipRect = D2D1::RectF(clipRect.x, clipRect.y, clipRect.z, clipRect.w);
+    D2D1_ROUNDED_RECT rrClip = D2D1::RoundedRect(d2dClipRect, data->rounding, data->rounding);
 
-    //Create bitmap brush for the clipping
-    ID2D1ImageBrush* outImageBrush = nullptr;
-    D2D1_IMAGE_BRUSH_PROPERTIES outImage_props = D2D1::ImageBrushProperties(screenRectF);
-    d2dDeviceContext->CreateImageBrush(
-            outImage,
-            outImage_props,
-            &outImageBrush
-    );
+    winrt::com_ptr<ID2D1RoundedRectangleGeometry> clipGeometry;
+    d2dFactory->CreateRoundedRectangleGeometry(rrClip, clipGeometry.put());
 
-    //Draw the blur
-    ID2D1RoundedRectangleGeometry* clipRectGeo = nullptr;
-    d2dFactory->CreateRoundedRectangleGeometry(clipRectRounded, &clipRectGeo);
-    d2dDeviceContext->FillGeometry(clipRectGeo, outImageBrush);
-    clipRectGeo->Release();
+    // 5) Create an ImageBrush from the blur effect’s output
+    winrt::com_ptr<ID2D1Image> blurredOutput;
+    blurEffect->GetOutput(blurredOutput.put());
 
-    //Release interfaces
+    D2D1_IMAGE_BRUSH_PROPERTIES brushProps =
+        D2D1::ImageBrushProperties(D2D1::RectF(0, 0, float(srcSize.width), float(srcSize.height)));
+    winrt::com_ptr<ID2D1ImageBrush> imageBrush;
+    hr = d2dDeviceContext->CreateImageBrush(blurredOutput.get(), brushProps, imageBrush.put());
+    if (FAILED(hr) || !imageBrush) {
+        spdlog::error("Failed to create image brush for blur");
+        return;
+    }
+
+    // 6) Fill the clip geometry with the blurred image
+    //    This effectively draws the blurred scene only inside the chosen rectangle
+    d2dDeviceContext->FillGeometry(clipGeometry.get(), imageBrush.get());
+
+    // 7) Flush to ensure the blur draws
     d2dDeviceContext->Flush();
-    outImageBrush->Release();
-    outImage->Release();
-    targetBitmap->Release();
-    //Free the callback data
-    for (auto it = blurCallbacks.begin(); it != blurCallbacks.end(); it++) {
+
+    // 8) Clean up
+    //    Remove from your blurCallbacks so we don’t keep data around
+    for (auto it = blurCallbacks.begin(); it != blurCallbacks.end(); ++it) {
         if (it->get() == data) {
             blurCallbacks.erase(it);
             break;
         }
     }
-
 }
 
-bool D2D::addBlur(ImDrawList* drawList, float strength, std::optional<ImVec4> clipRect, float rounding)
+bool D2D::addBlur(ImDrawList* drawList, float strength, std::optional<ImVec4> clipRectOpt, float rounding)
 {
-    if (!initD2D) {
+    if (!initD2D)
         return false;
-    }
-
-    if (strength == 0)
+    if (strength <= 0.f)
         return false;
 
-    auto uniqueData = std::make_shared<BlurCallbackData>(strength, rounding, clipRect);
+    // Create the shared callback data
+    auto uniqueData = std::make_shared<BlurCallbackData>(strength, rounding, clipRectOpt);
     auto data = uniqueData.get();
     blurCallbacks.push_back(uniqueData);
+
+    // We add a single callback that handles everything
     drawList->AddCallback(blurCallback, data);
     return true;
 }
@@ -320,7 +326,7 @@ void D2D::blurCallbackOptimized(const ImDrawList* parent_list, const ImDrawCmd* 
         return;
 
     ImGuiIO& io = ImGui::GetIO();
-    // Use the provided clip rectangle or fallback to the command�s clip rect.
+    // Use the provided clip rectangle or fallback to the command’s clip rect.
     ImVec4 clipRect = data->clipRect.has_value() ? *data->clipRect : cmd->ClipRect;
 
     // Ensure our cached bitmap matches the current render target.

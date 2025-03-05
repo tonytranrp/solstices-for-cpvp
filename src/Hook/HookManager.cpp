@@ -74,8 +74,8 @@ void HookManager::init(bool initLp)
         ADD_HOOK(ActorGlideHook);
         ADD_HOOK(GetFovHook);
        // ADD_HOOK(BoatControlHook); dont works idk why breh
-       // ADD_HOOK(GameModeStartDestroyHook);  // Add these
-       // ADD_HOOK(GameModeStopDestroyHook);   // two hooks
+        ADD_HOOK(GameModeStartDestroyHook);  // Add these
+        ADD_HOOK(GameModeStopDestroyHook);   // two hooks
 
 
         for (auto& hook : hooks)

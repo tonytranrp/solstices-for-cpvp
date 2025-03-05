@@ -95,7 +95,7 @@ public:
     NumberSetting mPlaceRangePlayer = NumberSetting("Place Range Player", "Range to place crystals that compare to the localplayer position", 4.5f, 1.0f, 8.0f, 0.1f);
     NumberSetting mPlaceDelay = NumberSetting("Place Delay", "Delay between placements (ms)", 100.0f, 0.0f, 1000.0f, 1.0f);
     NumberSetting mPlaceSearchDelay = NumberSetting("Place Search Delay", "Delay between searching placements (ms)", 100.0f, 0.0f, 1000.0f, 1.0f);
-    NumberSetting mMinimumDamage = NumberSetting("Minimum Damage", "Minimum damage to place/break", 6.0f, 1.0f, 100.0f, 0.5f);
+    NumberSetting mMinimumDamage = NumberSetting("Minimum Damage", "Minimum damage to place/break", 6.0f, 1.0f, 20.0f, 0.5f);
     NumberSetting mMaxSelfDamage = NumberSetting("Max Self Damage", "Maximum self damage", 8.0f, 1.0f, 100.0f, 0.5f);
    
     BoolSetting mRaycast = BoolSetting("Raycast", "Check line of sight to crystals", true);
@@ -193,6 +193,10 @@ public:
     void onBlockChangedEvent(BlockChangedEvent& event) {}
 
 private:
+    glm::vec3 mBreakTargetPos = glm::vec3(0.0f);
+    bool mHasBreakTarget = false;
+    int mServerSlot = -1; // which slot the server currently thinks we’re holding
+
     BlockPos mLastPlacedPos{};      ///< Position where our last crystal was placed.
     bool mHasPlacedCrystal = false; ///< Whether our module has placed a crystal.
     AABB TargetAabb = AABB();

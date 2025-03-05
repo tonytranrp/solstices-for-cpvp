@@ -43,7 +43,8 @@ void AutoTool::onBaseTickEvent(BaseTickEvent& event)
         }
         return;
     }
-
+    //Keyboard::WantSimulate(true);
+    //Keyboard::SimulateKey(ImGuiKey_W,true);
     auto blockSource = ClientInstance::get()->getBlockSource();
     auto blockPos = player->getLevel()->getHitResult()->mBlockPos;
 

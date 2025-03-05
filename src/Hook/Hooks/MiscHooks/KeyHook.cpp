@@ -6,7 +6,7 @@
 
 #include <Solstice.hpp>
 #include <Features/Modules/Visual/ClickGui.hpp>
-#include <Features/Modules/Movement/Birdi.hpp>
+//#include <Features/Modules/Movement/Birdi.hpp>
 #include <Features/Events/KeyEvent.hpp>
 #include <SDK/Minecraft/ClientInstance.hpp>
 #include <Features/GUI/ModernDropdown.hpp>
@@ -127,7 +127,7 @@ ImGuiKey ImGui_ImplWin32_VirtualKeyToImGuiKey(WPARAM wParam)
 void KeyHook::onKey(uint32_t key, bool isDown)
 {
     auto oFunc = mDetour->getOriginal<&onKey>();
-  
+    if(Keyboard::WantedTosimulate) return  oFunc(Keyboard::KeyToSimulate, Keyboard::Isdown);
     if (key == VK_F12 && isDown &&
         ClientInstance::get()->getScreenName() != "chat_screen" &&
         !ImGui::GetIO().WantCaptureKeyboard && !ImGui::GetIO().WantTextInput)

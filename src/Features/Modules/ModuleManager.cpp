@@ -18,6 +18,7 @@
 #include "Combat/Surround.hpp"
 
 #include "Misc/AntiBot.hpp"
+#include "Misc/FakePlayer.hpp"
 #include "Misc/Anticheat.hpp"
 #include "Misc/AntiCheatDetector.hpp"
 #include "Misc/AutoAccept.hpp"
@@ -221,6 +222,7 @@ void ModuleManager::init()
 
     // Misc
     mModules.emplace_back(std::make_shared<ToggleSounds>());
+    mModules.emplace_back(std::make_shared<FakePlayer>());
     mModules.emplace_back(std::make_shared<PacketMine>());
     mModules.emplace_back(std::make_shared<PacketLogger>());
     mModules.emplace_back(std::make_shared<DeviceSpoof>());

@@ -1,4 +1,5 @@
-﻿#pragma once
+﻿// PacketMine.hpp
+#pragma once
 
 #include <Features/Modules/Module.hpp>
 #include <SDK/Minecraft/Actor/Actor.hpp>
@@ -76,7 +77,12 @@ public:
     void resetMining() {
         mTargetPos = glm::ivec3(INT_MAX);
         mTargetFace = -1;
-        mBreakProgress = 0.0f;
+        // Also reset the GameMode's break progress
+        if (auto player = ClientInstance::get()->getLocalPlayer()) {
+            if (auto gm = player->getGameMode()) {
+                gm->mBreakProgress = 0.0f;
+            }
+        }
         mIsMining = false;
         mShouldSpoofSlot = true;
         mToolSlot = -1;
@@ -97,13 +103,17 @@ public:
             return;
         }
 
+        // Reset break progress on the GameMode
+        if (auto gm = player->getGameMode()) {
+            gm->mBreakProgress = 0.0f;
+        }
+
         mTargetPos = pos;
         mTargetFace = face;
-        mBreakProgress = 0.0f;
         mIsMining = true;
 
-        // Get best tool
-        mToolSlot = ItemUtils::getBestBreakingTool(block,true);
+        // Get best tool for the block
+        mToolSlot = ItemUtils::getBestBreakingTool(block, true);
         if (mToolSlot != -1 && mSwitchMode.mValue != SwitchMode::None) {
             if (mSwitchMode.mValue == SwitchMode::Silent) {
                 PacketUtils::spoofSlot(mToolSlot, false);
@@ -113,10 +123,9 @@ public:
                 player->getSupplies()->mSelectedSlot = mToolSlot;
             }
         }
-
-        //BlockUtils::startDestroyBlock(pos, face);
     }
 
+    // Revised onBaseTickEvent: now uses the GameMode's break progress
     void onBaseTickEvent(BaseTickEvent& event) {
         auto player = event.mActor;
         if (!player || !mIsMining) return;
@@ -132,26 +141,43 @@ public:
             return;
         }
 
-        // Update breaking progress
-        float destroySpeed = ItemUtils::getDestroySpeed(mToolSlot, block);
-        mBreakProgress += destroySpeed;
-        if (mBreakProgress > 1.0f) mBreakProgress = 1.0f;
+        auto gm = player->getGameMode();
+        if (!gm) return;
 
-        // Handle block breaking
-        if (mBreakProgress >= 1.0f) {
+        // If block is still being mined, add progress using the appropriate destroy speed.
+        if (gm->mBreakProgress < 1.0f) {
+            float rate = 0.0f;
+            if (mSwitchMode.mValue == SwitchMode::Silent) {
+                // Use our computed destroy speed from our tool when in silent mode.
+                rate = ItemUtils::getDestroySpeed(mToolSlot, block);
+            }
+            else {
+                // Otherwise use the GameMode's native destroy rate.
+                rate = gm->getDestroyRate(*block);
+            }
+            gm->mBreakProgress += rate;
+            if (gm->mBreakProgress > 1.0f)
+                gm->mBreakProgress = 1.0f;
+        }
+
+        // When break progress reaches 1.0, break the block.
+        if (gm->mBreakProgress >= 1.0f) {
             if (mSwitchMode.mValue == SwitchMode::Silent) {
                 PacketUtils::spoofSlot(mToolSlot, false);
             }
 
             player->swing();
-            BlockUtils::destroyBlock(mTargetPos, mTargetFace);
+            // Set our flag to force the block break to go through our hook.
+            mForceBreak = true;
+            gm->destroyBlock(mTargetPos, mTargetFace);
+            mForceBreak = false;
 
             if (mSwitchMode.mValue == SwitchMode::Silent && mSwitchBack.mValue) {
                 mShouldSpoofSlot = true;
             }
 
             if (mContinue.mValue) {
-                mBreakProgress = mContinueSpeed.mValue;
+                gm->mBreakProgress = mContinueSpeed.mValue;
             }
             else {
                 resetMining();
@@ -173,8 +199,10 @@ public:
         }
         else if (event.mPacket->getId() == PacketID::MobEquipment) {
             auto mpkt = event.getPacket<MobEquipmentPacket>();
-            if (mpkt->mSlot == mToolSlot) mShouldSpoofSlot = false;
-            else mShouldSpoofSlot = true;
+            if (mpkt->mSlot == mToolSlot)
+                mShouldSpoofSlot = false;
+            else
+                mShouldSpoofSlot = true;
         }
     }
 
@@ -182,9 +210,9 @@ public:
         if (!mVisuals.mValue || !mIsMining) return;
 
         AABB blockAABB = AABB(mTargetPos, glm::vec3(1));
-
-        glm::vec3 scale(mBreakProgress);
-        glm::vec3 center = mTargetPos.operator+=(glm::vec3(0.5f - scale.x / 2.0f, 0.5f - scale.y / 2.0f, 0.5f - scale.z / 2.0f));
+        float progress = ClientInstance::get()->getLocalPlayer()->getGameMode()->mBreakProgress;
+        glm::vec3 scale(progress);
+        glm::vec3 center = glm::vec3(mTargetPos) + glm::vec3(0.5f) - (scale * 0.5f);
         AABB progressAABB(center, scale);
 
         ImColor color = ColorUtils::getThemedColor(0);
@@ -196,8 +224,12 @@ public:
 private:
     glm::ivec3 mTargetPos = glm::ivec3(INT_MAX);
     int mTargetFace = -1;
-    float mBreakProgress = 0.0f;
     bool mIsMining = false;
     bool mShouldSpoofSlot = true;
     int mToolSlot = -1;
+    bool mForceBreak = false; // flag to force block break
+
+public:
+    // Expose our flag so hooks can check it.
+    bool shouldForceBreak() const { return mForceBreak; }
 };

@@ -1,4 +1,4 @@
-//
+ï»¿//
 // Created by Tozic on 7/15/2024.
 //
 
@@ -263,7 +263,7 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                             float radius = 0.f;
                             bool isLastSetting = (sIndex == (mod->mSettings.size() - 1));
                             if (endMod && isLastSetting) {
-                                // If it’s the last setting in the entire category
+                                // If itâ€™s the last setting in the entire category
                                 radius = 15.f;
                             }
                             else if (endMod) {
@@ -274,7 +274,7 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                             bool endSetting = (sIndex == mod->mSettings.size() - 1);
                             float setPadding = endSetting ? (-2.f * animation) : 0.f;
 
-                            // Example for color alpha = module’s cAnim * GUI animation
+                            // Example for color alpha = moduleâ€™s cAnim * GUI animation
                             ImColor rgb = ColorUtils::getThemedColor(moduleY * 2);
                             rgb.Value.w = animation * mod->cAnim;
 
@@ -675,19 +675,26 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
         }
     }
     // --- Begin Search Bar Section ---
-    // --- Begin Search Bar Section ---
     {
-        // We define some static variables for animation states:
-        static float searchAnim = 0.0f;       // 0 => fully hidden, 1 => fully visible
-        static float idleTimer = 3.0f;       // Timer before we start hiding the search bar
+        // 1) Animation states:
+        static float searchAnim = 0.0f;  // 0 => fully "down", 1 => fully "up"
+        static float idleTimer = 3.0f;   // Timer before we begin sliding it down
+        static const float openAnimValue = 1.0f;    // Where the bar is fully visible
+        static const float closedAnimValue = 0.3f;  // â€œLoweredâ€ position so it remains partially visible
         static bool  searchingPreviously = false;
+
+        // We'll assume you have these external variables somewhere:
+        // bool isSearching;
+        // std::string searchingModule;   // The user's typed text
+        // float textSize;                // Possibly 18.f or something
+        // ImVec2 screen;                 // The size of the window/screen
 
         ImGuiIO& io = ImGui::GetIO();
 
-        // If search mode is active, process typed characters:
+        // --- A) Process typed characters if user is in search mode ---
         if (isSearching) {
             for (unsigned int c : io.InputQueueCharacters) {
-                // Append only ASCII-printable characters.
+                // Append only ASCIIâ€printable characters.
                 if (c >= 32 && c < 127) {
                     searchingModule.push_back(static_cast<char>(c));
                 }
@@ -715,112 +722,92 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
             screen.y
         );
 
-        // If the user’s mouse is inside that region, we show the bar.
+        // If the user's mouse is inside that region, we consider it "hovered".
         bool isOverSearchRegion =
             (mousePos.x >= searchRegion.x && mousePos.x <= searchRegion.z &&
                 mousePos.y >= searchRegion.y && mousePos.y <= searchRegion.w);
 
-        // If the user is actively searching, keep it open (searchAnim -> 1).
-        // If the mouse is over the region, open as well.
+        // --- B) Update the searchAnim based on whether we want it "up" or "down" ---
         if (isSearching || isOverSearchRegion) {
-            // Animate up to 1.0
-            searchAnim = MathUtils::animate(1.0f, searchAnim, io.DeltaTime * 6.f);
-            // Reset the idle timer
-            idleTimer = 3.0f;
+            // Animate toward 'openAnimValue'
+            searchAnim = MathUtils::animate(openAnimValue, searchAnim, io.DeltaTime * 6.f);
+            idleTimer = 3.0f;  // reset idle timer
         }
         else {
-            // If no text is typed and we’re not searching, we can idle-close
+            // If no text is typed and weâ€™re not searching, eventually slide down
             if (searchingModule.empty()) {
                 idleTimer -= io.DeltaTime;
                 if (idleTimer <= 0.f) {
-                    searchAnim = MathUtils::animate(0.0f, searchAnim, io.DeltaTime * 6.f);
+                    // Slide it down but do NOT hide it completely:
+                    searchAnim = MathUtils::animate(closedAnimValue, searchAnim, io.DeltaTime * 6.f);
                 }
             }
+            // Otherwise, if there *is* typed text, you might keep it fully up, etc.
         }
 
-        // If user clicks inside “type area,” isSearching = true; otherwise false
-        // We'll define the search bar rect next:
-        float verticalSlide = 50.f * searchAnim; // we’ll slide it up/down by 50 px
+        // --- C) Position the bar using 'searchAnim' only for vertical sliding. ---
+        float verticalSlide = 50.f * searchAnim;
         ImVec4 searchRectPos(
             screen.x / 2.f - searchWidth * 0.5f,
-            screen.y - searchHeight * 0.5f + 10.f - verticalSlide,
+            (screen.y - searchHeight * 0.5f + 10.f) - verticalSlide,
             screen.x / 2.f + searchWidth * 0.5f,
-            screen.y + searchHeight * 0.5f + 10.f - verticalSlide
+            (screen.y + searchHeight * 0.5f + 10.f) - verticalSlide
         );
 
-        // We'll also fade the entire bar in/out by searchAnim:
-        float barAlpha = searchAnim; // if you want a slower fade, you can animate it separately
+        // We'll keep a constant barAlpha = 1.0f
+        float barAlpha = 1.0f;
 
-        // Reserve space on the right for a “Search” prompt
-        std::string searchPrompt = "Search ";
-        float promptWidth = ImRenderUtils::getTextWidth(&searchPrompt, textSize);
+
         ImVec4 typeRectPos(
             searchRectPos.x + 5.f,
             searchRectPos.y + 5.f,
-            searchRectPos.z - (promptWidth + 10.f),
+            searchRectPos.z, // reserve space for the icon
             searchRectPos.w - 5.f
         );
 
-        // If the user left-clicks in that rectangle, isSearching = true
+        // E) Mouse detection
         bool isInTypeArea = ModernGui::isMouseOver(typeRectPos);
         if (isInTypeArea && ImGui::IsMouseClicked(0)) {
             isSearching = true;
         }
-        // If the user clicks anywhere else, isSearching = false
         else if (!isInTypeArea && ImGui::IsMouseClicked(0)) {
             isSearching = false;
         }
 
-        // Now, we only do any rendering if barAlpha > a small threshold:
-        if (barAlpha > 0.01f)
+        // --- F) Always draw the bar
         {
-            // Optional: blur behind the search bar (just around searchRectPos)
-            // We expand that rect slightly:
+            // 1) If you want to keep calling blur logic:
             ImVec4 blurRect = searchRectPos;
-            blurRect.x -= 10.f;   blurRect.y -= 10.f;
-            blurRect.z += 10.f;   blurRect.w += 10.f;
-            // Multiply alpha for partial transparency
-            float blurFactor = 25.f * barAlpha; // set the blur strength (25 is an example)
+            blurRect.x -= 10.f;
+            blurRect.y -= 10.f;
+            blurRect.z += 10.f;
+            blurRect.w += 10.f;
+
+            float blurFactor = 25.f * barAlpha;
             ImRenderUtils::addBlur(blurRect, blurFactor, 0);
 
-            // Fill the background of the search bar
-            // We pass barAlpha as the color alpha multiplier
-            ImColor backgroundColor(29, 29, 29, (int)(255 * barAlpha));
+            // 2) Overdraw a fully opaque rectangle
+            ImColor backgroundColor(29, 29, 29, 255);
             ImRenderUtils::fillRectangle(
                 searchRectPos,
                 backgroundColor,
-                barAlpha, // scale factor for corners
-                7.5f,
+                1.0f,    // corner scale factor
+                7.5f,    // corner radius
                 ImGui::GetBackgroundDrawList(),
                 0
             );
 
-            // Fill the “type” sub-rectangle in a slightly darker color
-            ImColor typeRectColor(21, 21, 21, (int)(255 * barAlpha));
+            // Sub-rectangle for typing
+            ImColor typeRectColor(21, 21, 21, 255);
             ImRenderUtils::fillRectangle(
                 typeRectPos,
                 typeRectColor,
-                barAlpha,
+                1.0f,
                 7.5f,
                 ImGui::GetBackgroundDrawList(),
                 0
             );
-
-            // Draw the “Search” prompt on the right side
-            float promptX = typeRectPos.z + 5.f;
-            float promptY = typeRectPos.y;
-            ImRenderUtils::drawText(
-                ImVec2(promptX, promptY),
-                searchPrompt,
-                ImColor(255, 255, 255, (int)(255 * barAlpha)),
-                textSize,
-                barAlpha,
-                false,
-                0,
-                ImGui::GetForegroundDrawList()
-            );
-
-            // Render the user’s typed text, if any
+            // Render the userâ€™s typed text
             float currentTextWidth = ImRenderUtils::getTextWidth(&searchingModule, textSize);
             if (!searchingModule.empty())
             {
@@ -831,7 +818,6 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                     true
                 );
 
-                // Shift text left if overflow
                 ImVec2 typeTextPos(typeRectPos.x + 5.f, typeRectPos.y + 5.f);
                 float rightLimit = typeRectPos.z - 15.f;
                 if (typeTextPos.x + currentTextWidth > rightLimit) {
@@ -839,14 +825,13 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                     typeTextPos.x -= overflow;
                 }
 
-                // White text with alpha
-                ImColor textCol(255, 255, 255, (int)(255 * barAlpha));
+                ImColor textCol(255, 255, 255, 255);
                 ImRenderUtils::drawText(
                     typeTextPos,
                     searchingModule,
                     textCol,
                     textSize,
-                    barAlpha,
+                    1.0f,
                     false,
                     0,
                     fgDraw
@@ -855,30 +840,27 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
             }
             else if (!isSearching)
             {
-                // Show placeholder text if we are not searching
-                // (so it disappears if the user is actively typing or focusing)
+                // Show placeholder if not searching
                 std::string placeholder = "Search for Module :)";
-                ImColor placeholderCol(125, 125, 125, (int)(255 * barAlpha));
+                ImColor placeholderCol(125, 125, 125, 255);
                 ImRenderUtils::drawText(
                     ImVec2(typeRectPos.x + 5.f, typeRectPos.y + 5.f),
                     placeholder,
                     placeholderCol,
                     textSize,
-                    barAlpha,
+                    1.0f,
                     false,
                     0,
                     ImGui::GetForegroundDrawList()
                 );
             }
 
-            // Render a blinking caret if actively searching
-            // You can skip if you only want caret when isSearching = true
+            // G) Caret blinking if isSearching
             if (isSearching)
             {
                 static float caretOpacity = 1.f;
-                static bool caretIncreasing = false;
-                // Animate caret alpha up & down
-                float caretSpeed = 2.f; // blinking speed
+                static bool  caretIncreasing = false;
+                float caretSpeed = 2.f;
                 if (!caretIncreasing) {
                     caretOpacity -= io.DeltaTime * caretSpeed;
                     if (caretOpacity < 0.f) {
@@ -896,7 +878,7 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
 
                 // Draw caret at the end of typed text
                 ImVec2 caretPos(typeRectPos.x + 5.f + currentTextWidth, typeRectPos.y + 5.f);
-                ImColor caretColor(255, 255, 255, (int)(caretOpacity * barAlpha * 255));
+                ImColor caretColor(255, 255, 255, (int)(caretOpacity * 255));
                 ImRenderUtils::fillRectangle(
                     ImVec4(caretPos.x, caretPos.y, caretPos.x + 2.f, caretPos.y + textSize),
                     caretColor,
@@ -906,9 +888,11 @@ void ModernGui::render(float animation, float inScale, int& scrollDirection, cha
                     0
                 );
             }
-        } // end if (barAlpha > 0.01f)
-    }
+        }
+}
     // --- End Search Bar Section ---
+
+
 
 
     ImGui::PopFont();
