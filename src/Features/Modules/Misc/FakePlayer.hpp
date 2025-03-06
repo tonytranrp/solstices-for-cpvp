@@ -1,12 +1,9 @@
 #pragma once
 
 #include <Features/Modules/Module.hpp>
-#include <SDK/Minecraft/Actor/Components/ActorRotationComponent.hpp>
-#include <SDK/Minecraft/Actor/Components/ActorHeadRotationComponent.hpp>
-#include <SDK/Minecraft/Rendering/BaseActorRenderContext.hpp>
-#include <SDK/Minecraft/Actor/Components/MobBodyRotationComponent.hpp>
-#include <glm/vec3.hpp>
-#include <glm/vec2.hpp>
+#include <SDK/Minecraft/ClientInstance.hpp>
+#include <SDK/Minecraft/Actor/Actor.hpp>
+#include <glm/glm.hpp>
 
 class FakePlayer : public ModuleBase<FakePlayer> {
 public:
@@ -15,17 +12,22 @@ public:
     void onEnable() override;
     void onDisable() override;
 
-    // This event handler will render the fake local player.
+    // We'll listen to ActorRenderEvent to inject our fake render.
     void onActorRenderEvent(class ActorRenderEvent& event);
 
 private:
-    // Saved data from the local player when FakePlayer is enabled.
     bool mSaved = false;
-    glm::vec3 mSavedPos;          // saved render (or state) position
-    glm::vec3 mSavedAABBMin;      // saved bounding box min
-    glm::vec3 mSavedAABBMax;      // saved bounding box max
-    ActorRotationComponent mSavedRot;
-    ActorHeadRotationComponent mSavedHeadRot;
-    MobBodyRotationComponent mSavedBodyRot;
-    //class BaseActorRenderContext base;
+    glm::vec3 mSavedPos = glm::vec3(0.0f);
+    glm::vec3 mSavedAABBMin = glm::vec3(0.0f);
+    glm::vec3 mSavedAABBMax = glm::vec3(0.0f);
+    // Save player's rotation components.
+    struct {
+        float mYaw, mPitch;
+    } mSavedRot;
+    struct {
+        float mHeadRot;
+    } mSavedHeadRot;
+    struct {
+        float mBodyRot;
+    } mSavedBodyRot;
 };

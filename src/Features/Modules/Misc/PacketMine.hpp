@@ -24,6 +24,14 @@ public:
         Normal
     };
 
+    // New state enum for intercepting the mining process.
+    enum class MiningState {
+        Idle,      // Not mining
+        Waiting,   // Waiting (e.g. waiting for delay or progress accumulation)
+        Rotating,  // In the process of rotating toward the target
+        Breaking   // Actively breaking the block
+    };
+
     // Settings
     NumberSetting mRange = NumberSetting("Range", "Maximum mining range", 5.0f, 1.0f, 10.0f, 0.1f);
     BoolSetting mContinue = BoolSetting("Continue", "Continue mining block after completion", false);
@@ -62,9 +70,9 @@ public:
     }
 
     void onEnable() override {
-        gFeatureManager->mDispatcher->listen<BaseTickEvent, &PacketMine::onBaseTickEvent>(this);
-        gFeatureManager->mDispatcher->listen<PacketOutEvent, &PacketMine::onPacketOutEvent>(this);
-        gFeatureManager->mDispatcher->listen<RenderEvent, &PacketMine::onRenderEvent>(this);
+        gFeatureManager->mDispatcher->listen<BaseTickEvent, &PacketMine::onBaseTickEvent, nes::event_priority::ABSOLUTE_FIRST>(this);
+        gFeatureManager->mDispatcher->listen<PacketOutEvent, &PacketMine::onPacketOutEvent, nes::event_priority::ABSOLUTE_FIRST>(this);
+        gFeatureManager->mDispatcher->listen<RenderEvent, &PacketMine::onRenderEvent, nes::event_priority::ABSOLUTE_FIRST>(this);
     }
 
     void onDisable() override {
@@ -74,6 +82,7 @@ public:
         resetMining();
     }
 
+    // Utility: Reset mining and clear state.
     void resetMining() {
         mTargetPos = glm::ivec3(INT_MAX);
         mTargetFace = -1;
@@ -86,20 +95,25 @@ public:
         mIsMining = false;
         mShouldSpoofSlot = true;
         mToolSlot = -1;
+        mMiningState = MiningState::Idle;
+        mWaitUntil = 0.0;
     }
 
+    // Set the target block to mine.
     void setTargetBlock(const glm::ivec3& pos, int face) {
         auto player = ClientInstance::get()->getLocalPlayer();
         if (!player) return;
 
         if (!BlockUtils::isGoodBlock(pos)) {
             resetMining();
+            ChatUtils::displayClientMessage("PacketMine: Block at " + std::to_string(pos.x) + ", " + std::to_string(pos.y) + ", " + std::to_string(pos.z) + " is not good.");
             return;
         }
 
         auto block = ClientInstance::get()->getBlockSource()->getBlock(pos);
         if (!block) {
             resetMining();
+            ChatUtils::displayClientMessage("PacketMine: No block found at target pos.");
             return;
         }
 
@@ -111,6 +125,8 @@ public:
         mTargetPos = pos;
         mTargetFace = face;
         mIsMining = true;
+        mMiningState = MiningState::Waiting;
+        ChatUtils::displayClientMessage("PacketMine: Target set at (" + std::to_string(pos.x) + ", " + std::to_string(pos.y) + ", " + std::to_string(pos.z) + ")");
 
         // Get best tool for the block
         mToolSlot = ItemUtils::getBestBreakingTool(block, true);
@@ -125,34 +141,61 @@ public:
         }
     }
 
-    // Revised onBaseTickEvent: now uses the GameMode's break progress
+    // Utility to set a delay (in seconds) before mining can proceed.
+    void setMiningWait(double seconds) {
+        mWaitUntil = NOW + seconds;
+        ChatUtils::displayClientMessage("PacketMine: Waiting for " + std::to_string(seconds) + " seconds.");
+    }
+
+    // Utility: Check if PacketMine is actively mining (not idle).
+    bool isMiningActive() const {
+        return mMiningState != MiningState::Idle;
+    }
+
+    // Revised onBaseTickEvent: updates break progress and state.
     void onBaseTickEvent(BaseTickEvent& event) {
         auto player = event.mActor;
-        if (!player || !mIsMining) return;
+        if (!player || !mIsMining) {
+            mMiningState = MiningState::Idle;
+            return;
+        }
 
+        // If waiting for delay, do not proceed.
+        if (NOW < mWaitUntil) {
+            mMiningState = MiningState::Waiting;
+            return;
+        }
+
+        // Check if the block is minable (skip air/bedrock)
         if (!BlockUtils::isGoodBlock(mTargetPos)) {
+            ChatUtils::displayClientMessage("PacketMine: Target block at (" + std::to_string(mTargetPos.x) + ", " + std::to_string(mTargetPos.y) + ", " + std::to_string(mTargetPos.z) + ") is not minable.");
             resetMining();
+            mMiningState = MiningState::Idle;
             return;
         }
 
         auto block = ClientInstance::get()->getBlockSource()->getBlock(mTargetPos);
         if (!block) {
+            ChatUtils::displayClientMessage("PacketMine: Block not found at target pos.");
             resetMining();
+            mMiningState = MiningState::Idle;
             return;
         }
 
         auto gm = player->getGameMode();
-        if (!gm) return;
+        if (!gm) {
+            mMiningState = MiningState::Idle;
+            return;
+        }
 
-        // If block is still being mined, add progress using the appropriate destroy speed.
+        // While progress is below threshold, remain in Waiting state.
         if (gm->mBreakProgress < 1.0f) {
+            mMiningState = MiningState::Waiting;
             float rate = 0.0f;
             if (mSwitchMode.mValue == SwitchMode::Silent) {
-                // Use our computed destroy speed from our tool when in silent mode.
                 rate = ItemUtils::getDestroySpeed(mToolSlot, block);
             }
             else {
-                // Otherwise use the GameMode's native destroy rate.
                 rate = gm->getDestroyRate(*block);
             }
             gm->mBreakProgress += rate;
@@ -160,14 +203,17 @@ public:
                 gm->mBreakProgress = 1.0f;
         }
 
-        // When break progress reaches 1.0, break the block.
+        // When break progress reaches 1.0, update state to Breaking and perform the break.
+        if (gm->mBreakProgress >= 0.96f) {
+            mMiningState = MiningState::Breaking;
+        }
         if (gm->mBreakProgress >= 1.0f) {
+           
+            ChatUtils::displayClientMessage("PacketMine: Breaking block at (" + std::to_string(mTargetPos.x) + ", " + std::to_string(mTargetPos.y) + ", " + std::to_string(mTargetPos.z) + ")");
             if (mSwitchMode.mValue == SwitchMode::Silent) {
                 PacketUtils::spoofSlot(mToolSlot, false);
             }
-
             player->swing();
-            // Set our flag to force the block break to go through our hook.
             mForceBreak = true;
             gm->destroyBlock(mTargetPos, mTargetFace);
             mForceBreak = false;
@@ -178,24 +224,40 @@ public:
 
             if (mContinue.mValue) {
                 gm->mBreakProgress = mContinueSpeed.mValue;
+                mMiningState = MiningState::Waiting;
             }
             else {
                 resetMining();
+                mMiningState = MiningState::Idle;
             }
+        }
+
+        // Debug output throttled to once per second.
+        static double lastDebugTime = 0.0;
+        if (NOW - lastDebugTime > 1.0) {
+            ChatUtils::displayClientMessage(
+                "PacketMine Debug: State=" + miningStateToString(mMiningState)
+            );
+            lastDebugTime = NOW;
         }
     }
 
+    // onPacketOutEvent: send rotation only if we're in the Breaking state.
     void onPacketOutEvent(PacketOutEvent& event) {
         if (!mIsMining) return;
 
         if (event.mPacket->getId() == PacketID::PlayerAuthInput) {
-            auto player = ClientInstance::get()->getLocalPlayer();
-            if (!player) return;
+            // Only send rotation packets if we're in the Breaking state.
+            if (mMiningState == MiningState::Breaking) {
+                auto player = ClientInstance::get()->getLocalPlayer();
+                if (!player) return;
 
-            auto packet = event.getPacket<PlayerAuthInputPacket>();
-            glm::vec2 rots = MathUtils::getRots(*player->getPos(), AABB(mTargetPos, glm::vec3(1)));
-            packet->mRot = rots;
-            packet->mYHeadRot = rots.y;
+                auto packet = event.getPacket<PlayerAuthInputPacket>();
+                glm::vec2 rots = MathUtils::getRots(*player->getPos(), AABB(mTargetPos, glm::vec3(1)));
+                packet->mRot = rots;
+                packet->mYHeadRot = rots.y;
+                ChatUtils::displayClientMessage("PacketMine: Rotation packet sent. (Breaking state)");
+            }
         }
         else if (event.mPacket->getId() == PacketID::MobEquipment) {
             auto mpkt = event.getPacket<MobEquipmentPacket>();
@@ -221,7 +283,11 @@ public:
         RenderUtils::drawOutlinedAABB(progressAABB, true, color);
     }
 
+    // Expose our flag so hooks can check it.
+    bool shouldForceBreak() const { return mForceBreak; }
+
 private:
+    // Target block position & face.
     glm::ivec3 mTargetPos = glm::ivec3(INT_MAX);
     int mTargetFace = -1;
     bool mIsMining = false;
@@ -229,7 +295,20 @@ private:
     int mToolSlot = -1;
     bool mForceBreak = false; // flag to force block break
 
+    // New state variable and wait timer.
+   
+    double mWaitUntil = 0.0;
+
+    // Helper: Convert mining state to string.
+    std::string miningStateToString(MiningState state) {
+        switch (state) {
+        case MiningState::Idle: return "Idle";
+        case MiningState::Waiting: return "Waiting";
+        case MiningState::Rotating: return "Rotating";
+        case MiningState::Breaking: return "Breaking";
+        default: return "Unknown";
+        }
+    }
 public:
-    // Expose our flag so hooks can check it.
-    bool shouldForceBreak() const { return mForceBreak; }
+        MiningState mMiningState = MiningState::Idle;
 };

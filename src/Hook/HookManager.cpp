@@ -7,6 +7,7 @@
 #include <MinHook.h>
 
 #include "Hooks/ActorHooks/ActorModelHook.hpp"
+#include "Hooks/ActorHooks/ActorSetSprintingSystem.hpp"
 #include "Hooks/ActorHooks/GetFovHook.hpp"
 #include "Hooks/ActorHooks/ActorGlideHook.hpp"
 #include "Hooks/ActorHooks/AnimationHooks.hpp"
@@ -60,7 +61,6 @@ void HookManager::init(bool initLp)
         ADD_HOOK(PacketReceiveHook);
         ADD_HOOK(PacketSendHook);
         ADD_HOOK(RakPeerHooks);
-      // ADD_HOOK(NoParticleRenderHook);
         ADD_HOOK(ActorRenderDispatcherHook);
         ADD_HOOK(AnimationHooks);
         ADD_HOOK(HoverTextRendererHook);
@@ -73,9 +73,9 @@ void HookManager::init(bool initLp)
         ADD_HOOK(NametagRenderHook);
         ADD_HOOK(ActorGlideHook);
         ADD_HOOK(GetFovHook);
-       // ADD_HOOK(BoatControlHook); dont works idk why breh
-        ADD_HOOK(GameModeStartDestroyHook);  // Add these
-        ADD_HOOK(GameModeStopDestroyHook);   // two hooks
+        //ADD_HOOK(ActorSetSprintingSystem);
+        ADD_HOOK(GameModeStartDestroyHook);
+        ADD_HOOK(GameModeStopDestroyHook);
 
 
         for (auto& hook : hooks)

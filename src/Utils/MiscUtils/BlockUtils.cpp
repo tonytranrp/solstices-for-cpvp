@@ -26,13 +26,26 @@
 #include <SDK/Minecraft/World/Chunk/SubChunkBlockStorage.hpp>
 
 
-bool BlockUtils::isGoodBlock(glm::ivec3 blockPos)
-{
+bool BlockUtils::isGoodBlock(glm::ivec3 blockPos) {
     auto player = ClientInstance::get()->getLocalPlayer();
     if (!player) return false;
+
     Block* block = ClientInstance::get()->getBlockSource()->getBlock(blockPos);
+    if (!block) return false; // Check that we have a valid block
+
     int blockId = block->toLegacy()->getBlockId();
-    bool isLiquid = 8 <= blockId && blockId <= 11;
+
+    // Check if the block is liquid (IDs 8-11)
+    bool isLiquid = (blockId >= 8 && blockId <= 11);
+
+    // Exclude non-breakable blocks: here we explicitly exclude bedrock (ID 7).
+    if (blockId == 7) return false;
+    // (Add additional non-breakable IDs if needed, for example:
+    // if (blockId == <other_non_breakable_id>) return false;
+    // )
+
+    // Finally, ensure the block is not air (0), is not liquid,
+    // and its material is blocking motion.
     return blockId != 0 && !isLiquid && block->toLegacy()->mMaterial->mIsBlockingMotion;
 }
 

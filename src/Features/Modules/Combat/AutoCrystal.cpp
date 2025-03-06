@@ -1,5 +1,6 @@
 ﻿#include "AutoCrystal.hpp"
 #include <Features/Events/BaseTickEvent.hpp>
+#include <Features/Modules/Misc/PacketMine.hpp>
 #include <Features/Events/RenderEvent.hpp>
 #include <Features/Events/PacketOutEvent.hpp>
 #include <SDK/Minecraft/ClientInstance.hpp>
@@ -26,10 +27,10 @@
 #include <random>
 
 void AutoCrystal::onEnable() {
-    gFeatureManager->mDispatcher->listen<BaseTickEvent, &AutoCrystal::onBaseTickEvent>(this);
-    gFeatureManager->mDispatcher->listen<RenderEvent, &AutoCrystal::onRenderEvent>(this);
-    gFeatureManager->mDispatcher->listen<PacketOutEvent, &AutoCrystal::onPacketOutEvent>(this);
-    gFeatureManager->mDispatcher->listen<PacketInEvent, &AutoCrystal::onPacketInEvent>(this);
+    gFeatureManager->mDispatcher->listen<BaseTickEvent, &AutoCrystal::onBaseTickEvent, nes::event_priority::ABSOLUTE_FIRST>(this);
+    gFeatureManager->mDispatcher->listen<RenderEvent, &AutoCrystal::onRenderEvent, nes::event_priority::ABSOLUTE_FIRST>(this);
+    gFeatureManager->mDispatcher->listen<PacketOutEvent, &AutoCrystal::onPacketOutEvent, nes::event_priority::ABSOLUTE_FIRST>(this);
+    gFeatureManager->mDispatcher->listen<PacketInEvent, &AutoCrystal::onPacketInEvent, nes::event_priority::ABSOLUTE_FIRST>(this);
     // rots = {};
 }
 
@@ -88,8 +89,6 @@ float AutoCrystal::calculateDamage(const BlockPos& crystalPos, Actor* target) {
     finalDamage = std::clamp(finalDamage, 0.0f, 20.0f);
     return finalDamage;
 }
-
-
 bool AutoCrystal::canPlaceCrystal(const BlockPos& pos, const std::vector<Actor*>& runtimeActors) {
     BlockSource* bs = ClientInstance::get()->getBlockSource();
     if (!bs) return false;
@@ -108,31 +107,30 @@ bool AutoCrystal::canPlaceCrystal(const BlockPos& pos, const std::vector<Actor*>
     if (exposedHeight < 2) {
         return false;  // 🏗️ At least two blocks above must be clear (space for crystal)
     }
-    // Verify the crystal would be within placeable range from the player (safety net check)
-    glm::vec3 playerPos = *player->getPos();
-    glm::vec3 crystalCenter(pos.x + 0.5f, pos.y + 1.0f, pos.z + 0.5f);
-    if (glm::distance(playerPos, crystalCenter) > mPlaceRange.mValue) {
-        return false;
-    }
-
-    // 📦 **Construct the crystal's bounding box for collision checks** 
-    AABB crystalAABB(
-        glm::vec3(pos.x, pos.y + 1.0f, pos.z),         // bottom face of the crystal (on top of base block)
-        glm::vec3(pos.x + 1.0f, pos.y + 2.0f, pos.z + 1.0f), // top face (crystal height ~1 block)
+    // Define the crystal placement AABB.
+    AABB placeAABB(
+        glm::vec3(pos.x, pos.y + 1.f, pos.z),
+        glm::vec3(pos.x + 1.f, pos.y + 2.f, pos.z + 1.f),
         true
     );
-    // 🚧 **Check for entity collisions in the placement area**
+
+    // Iterate over the runtime actors (only one loop now)
     for (auto* entity : runtimeActors) {
         if (!entity->isValid()) continue;
-        if (entity->getActorTypeComponent()->mType == ActorType::EnderCrystal) continue;  // ignore existing crystals
-        AABB entBB = entity->getAABB();
-        if (entBB.mMin == entBB.mMax) continue;  // skip entities with no valid AABB (e.g., dead or phantoms)
-        // Expand the entity's AABB slightly (0.1 in XZ) to be safe
-        entBB.mMin -= glm::vec3(0.1f, 0.0f, 0.1f);
-        entBB.mMax += glm::vec3(0.1f, 0.0f, 0.1f);
-        if (crystalAABB.intersects(entBB)) {
-            return false;  // 🚫 Another entity is occupying the spot where the crystal would be
-        }
+        // Ignore existing crystals.
+        if (entity->getActorTypeComponent()->mType == ActorType::EnderCrystal)
+            continue;
+
+        AABB entityAABB = entity->getAABB();
+        // Skip invalid/degenerated bounding boxes.
+        if (entityAABB.mMin == entityAABB.mMax) continue;
+        // Slightly expand the entity's AABB.
+        entityAABB.mMin -= glm::vec3(0.1f, 0.f, 0.1f);
+        entityAABB.mMax += glm::vec3(0.1f, 0.f, 0.1f);
+
+        // Use a simple intersection check.
+        if (placeAABB.intersects(entityAABB))
+            return false;
     }
     return true;
 }
@@ -147,7 +145,7 @@ std::vector<AutoCrystal::PlacePosition> AutoCrystal::findPlacePositions(const st
     float closestDist = std::numeric_limits<float>::max();
     glm::vec3 playerPos = *player->getPos();
     for (auto* actor : runtimeActors) {
-        if (actor == player ||!actor->isValid() || !actor->isPlayer()) continue;
+        if (actor == player || !actor->isValid() || !actor->isPlayer()) continue;
         if (Friends::isFriend(actor->getNameTag())) continue;
         float dist = glm::distance(*actor->getPos(), playerPos);
         if (dist > mRange.mValue) continue;
@@ -223,19 +221,35 @@ std::vector<AutoCrystal::PlacePosition> AutoCrystal::findPlacePositions(const st
     }
     return positions;
 }
-
-
-
 std::vector<AutoCrystal::BreakTarget> AutoCrystal::findBreakTargets(const std::vector<Actor*>& runtimeActors) {
     std::vector<BreakTarget> breakTargets;
     auto* player = ClientInstance::get()->getLocalPlayer();
     if (!player) return breakTargets;
 
-    // Iterate over runtime actors to find valid crystals.
+    // First, try to find a valid enemy target.
+    Actor* targetActor = nullptr;
+    float closestDist = std::numeric_limits<float>::max();
+    glm::vec3 playerPos = *player->getPos();
+    for (auto* actor : runtimeActors) {
+        // Filter out invalid players and friends.
+        if (actor == player || !actor->isValid() || !actor->isPlayer()) continue;
+        if (Friends::isFriend(actor->getNameTag())) continue;
+        float dist = glm::distance(*actor->getPos(), playerPos);
+        if (dist > mRange.mValue) continue;
+        if (dist < closestDist) {
+            closestDist = dist;
+            targetActor = actor;
+        }
+    }
+    // If no enemy target is found, do not break crystals.
+    if (!targetActor)
+        return breakTargets;
+
+    // Now iterate over runtime actors to find valid crystals.
     for (auto* actor : runtimeActors) {
         if (!actor->isValid() || actor->getActorTypeComponent()->mType != ActorType::EnderCrystal)
             continue;
-        float dist = glm::distance(*actor->getPos(), *player->getPos());
+        float dist = glm::distance(*actor->getPos(), playerPos);
         if (dist > mRange.mValue)
             continue;
         // Calculate damage values; for demonstration we use calculateDamage.
@@ -249,6 +263,7 @@ std::vector<AutoCrystal::BreakTarget> AutoCrystal::findBreakTargets(const std::v
         });
     return breakTargets;
 }
+
 //https://stackoverflow.com/questions/5743678/generate-random-number-between-0-and-10
 template <typename T>
 T randomFrom(const T min, const T max)
@@ -406,6 +421,9 @@ void AutoCrystal::breakCrystal(Actor* crystal)
         // Normal break
         player->getGameMode()->attack(crystal);
         player->swing();
+        // Reset break target after a successful break.
+        mHasBreakTarget = false;
+        mBreakTargetPos = glm::vec3(0.0f);
         return;
     }
 
@@ -427,6 +445,9 @@ void AutoCrystal::breakCrystal(Actor* crystal)
     mLastAttackId += mPredictAmount.mValue;
     mShouldIdPredict = false;
     player->swing();
+    // Reset break target after breaking.
+    mHasBreakTarget = false;
+    mBreakTargetPos = glm::vec3(0.0f);
 }
 
 std::vector<AutoCrystal::PlacePosition> AutoCrystal::getplacmenet(const std::vector<Actor*>& runtimeActors) {
@@ -437,11 +458,30 @@ std::vector<AutoCrystal::PlacePosition> AutoCrystal::getplacmenet(const std::vec
     mLastsearchPlace = NOW;
 }
 void AutoCrystal::onBaseTickEvent(BaseTickEvent& event) {
+    // If we are still waiting for our delay, decrement and do nothing.
+    if (mActionDelayTicks > 0) {
+        mActionDelayTicks--;
+        return;
+    }
+
     if (!mAutoPlace.mValue) return;
     auto* player = ClientInstance::get()->getLocalPlayer();
     if (!player) return;
     auto* level = player->getLevel();
     if (!level) return;
+
+    // Check if PacketMine is active. If so, reset AutoCrystal state and set delay.
+    auto* packetMine = gFeatureManager->mModuleManager->getModule<PacketMine>();
+    if (packetMine && packetMine->isMiningActive()) {
+        ChatUtils::displayClientMessage("AutoCrystal: Waiting, PacketMine is active.");
+        mPossiblePlacements.clear();
+        mBreakTargetPos = glm::vec3(); // reset to zero vector
+        mHasBreakTarget = false;
+        mLastTarget = nullptr;
+        mRotating = false;
+        mActionDelayTicks = 2;
+        return;
+    }
 
     // Grab the runtime actor list once.
     const auto& runtimeActors = level->getRuntimeActorList();
@@ -449,17 +489,11 @@ void AutoCrystal::onBaseTickEvent(BaseTickEvent& event) {
     switchToCrystal();
 
     // Get potential placements using the pre-obtained runtime list.
-
     auto placements = getplacmenet(runtimeActors);
-
-
     mPossiblePlacements = placements;
     if (!placements.empty()) {
         // Place crystal at best candidate.
         placeCrystal(placements[0]);
-        // ChatUtils::displayClientMessage("position placed : " + std::to_string(placements[0].position.x) + " " + std::to_string(placements[0].position.y) + " " + std::to_string(placements[0].position.x));
-
-
     }
 
     // Process break targets using the same runtime list.
