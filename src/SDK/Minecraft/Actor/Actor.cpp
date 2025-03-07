@@ -422,7 +422,10 @@ void Actor::setNametag(const std::string& name)
     static auto func = SigManager::Actor_setNameTag;
     MemUtils::callFastcall<void, void*, std::string>(func, this, name);
 }
-
+int Actor::getItemUseDuration() {
+    static auto func = SigManager::Actor_GetItemUseDuration;
+    return MemUtils::callFastcall<int>(func, this);
+}
 float Actor::getMaxHealth()
 {
     auto health = getAttribute(Health);

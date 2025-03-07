@@ -120,13 +120,24 @@ bool AutoCrystal::canPlaceCrystal(const BlockPos& pos, const std::vector<Actor*>
         // Ignore existing crystals.
         if (entity->getActorTypeComponent()->mType == ActorType::EnderCrystal)
             continue;
+        /*
+        * AABB targetAABB = *actor->getAABB();
 
+		// Slightly expand the AABB for non-crystal entities
+		if (actor->getEntityTypeId() == 319) { // Example entity type
+			targetAABB.lower = targetAABB.lower.sub(Vec3<float>(0.1f, 0.f, 0.1f));
+			targetAABB.upper = targetAABB.upper.add(0.1f, 0.f, 0.1f);
+		}
+
+		// If any entity's AABB intersects with the placement AABB, return false
+		if (targetAABB.intersects(placeAABB))
+			return false;
+        */
         AABB entityAABB = entity->getAABB();
-        // Skip invalid/degenerated bounding boxes.
-        if (entityAABB.mMin == entityAABB.mMax) continue;
-        // Slightly expand the entity's AABB.
-        entityAABB.mMin -= glm::vec3(0.1f, 0.f, 0.1f);
-        entityAABB.mMax += glm::vec3(0.1f, 0.f, 0.1f);
+        if (entity->getActorTypeComponent()->mType == ActorType::idkallentities) {
+            entityAABB.mMin = entityAABB.mMin - glm::vec3(0.1f, 0.f, 0.1f);
+            entityAABB.mMax = entityAABB.mMax + glm::vec3(0.1f, 0.f, 0.1f);
+        }
 
         // Use a simple intersection check.
         if (placeAABB.intersects(entityAABB))
@@ -134,92 +145,91 @@ bool AutoCrystal::canPlaceCrystal(const BlockPos& pos, const std::vector<Actor*>
     }
     return true;
 }
+//
+// Improved placement search function.
+// Searches one Y layer at a time (from top to bottom) around the target actor.
+// Once any candidate(s) is found in a layer, the best candidate is selected and
+// the search stops early (to save performance).
+//
 std::vector<AutoCrystal::PlacePosition> AutoCrystal::findPlacePositions(const std::vector<Actor*>& runtimeActors) {
-    std::vector<PlacePosition> positions;
+    std::vector<PlacePosition> bestCandidates;
     auto* player = ClientInstance::get()->getLocalPlayer();
     if (!player)
-        return positions;
+        return bestCandidates;
 
-    // Identify the closest valid enemy actor (ignoring friends and invalid actors)
+    auto* bs = ClientInstance::get()->getBlockSource();
+    if (!bs)
+        return bestCandidates;
+
+    // 1. Find the closest enemy target within range.
     Actor* targetActor = nullptr;
-    float closestDist = std::numeric_limits<float>::max();
+    float bestDist = std::numeric_limits<float>::max();
     glm::vec3 playerPos = *player->getPos();
     for (auto* actor : runtimeActors) {
-        if (actor == player || !actor->isValid() || !actor->isPlayer()) continue;
-        if (Friends::isFriend(actor->getNameTag())) continue;
+        if (actor == player || !actor->isValid() || !actor->isPlayer())
+            continue;
+        if (Friends::isFriend(actor->getNameTag()))
+            continue;
         float dist = glm::distance(*actor->getPos(), playerPos);
-        if (dist > mRange.mValue) continue;
-        if (dist < closestDist) {
-            closestDist = dist;
+        if (dist <= mRange.mValue && dist < bestDist) {
+            bestDist = dist;
             targetActor = actor;
         }
     }
     if (!targetActor)
-        return positions;  // no target found
+        return bestCandidates;
 
-    // Use target actor's position as the center for searching placement positions
+    // Use the target's position as the center of our search.
     BlockPos targetPos = *targetActor->getPos();
-    int range = static_cast<int>(mPlaceRange.mValue);  // search radius around target
-    const int yMin = -5, yMax = 1;                     // vertical search limits relative to target
+    int range = static_cast<int>(mPlaceRange.mValue);
 
-    // Precompute candidate offsets sorted by their squared distance from (0,0,0)
-    struct Offset { int x, y, z; float sqrDist; };
-    static std::vector<Offset> sortedOffsets;
-    static int lastRange = -1;
-    if (range != lastRange || sortedOffsets.empty()) {
-        sortedOffsets.clear();
-        for (int dx = -range; dx <= range; ++dx) {
-            for (int dy = yMin; dy <= yMax; ++dy) {
-                for (int dz = -range; dz <= range; ++dz) {
-                    float sqDist = static_cast<float>(dx * dx + dy * dy + dz * dz);
-                    sortedOffsets.push_back({ dx, dy, dz, sqDist });
-                }
+    // 2. Search layer-by-layer.
+    // Iterate over Y from the top (e.g. y offset 1) down to the bottom (e.g. -5).
+    bool foundCandidateInLayer = false;
+    for (int y = 1; y >= -5 && !foundCandidateInLayer; y--) {
+        std::vector<PlacePosition> layerCandidates;
+        for (int x = -range; x <= range; x++) {
+            for (int z = -range; z <= range; z++) {
+                BlockPos checkPos = targetPos + BlockPos(x, y, z);
+                // Center of the candidate block (for distance calculations)
+                glm::vec3 checkCenter(checkPos.x + 0.5f, checkPos.y + 0.5f, checkPos.z + 0.5f);
+
+                // Basic range filters: skip if too far from target or player.
+                if (glm::distance(checkCenter, glm::vec3(targetPos.x, targetPos.y, targetPos.z)) > mPlaceRange.mValue)
+                    continue;
+                if (glm::distance(checkCenter, playerPos) > mPlaceRangePlayer.mValue)
+                    continue;
+
+                // Validate placement by checking if we can place a crystal here.
+                if (!canPlaceCrystal(checkPos, runtimeActors))
+                    continue;
+
+                // Calculate the explosion damage on the target.
+                float targetDamage = calculateDamage(checkPos, targetActor);
+                if (targetDamage < mMinimumDamage.mValue)
+                    continue;
+
+                // Calculate distance from the player for sorting tie-breakers.
+                float distFromPlayer = glm::distance(checkCenter, playerPos);
+                layerCandidates.emplace_back(checkPos, targetDamage, distFromPlayer);
             }
         }
-        std::sort(sortedOffsets.begin(), sortedOffsets.end(), [](const Offset& a, const Offset& b) {
-            return a.sqrDist < b.sqrDist;
-            });
-        lastRange = range;
-    }
 
-    float bestScore = -std::numeric_limits<float>::infinity();
-    PlacePosition bestCandidate;
-    bool foundCandidate = false;
-    glm::vec3 targetCenter = *targetActor->getPos();
-
-    // Iterate over candidate offsets
-    for (const Offset& off : sortedOffsets) {
-        BlockPos checkPos = targetPos + BlockPos(off.x, off.y, off.z);
-        // Determine the crystal's center position (where explosion occurs)
-        glm::vec3 crystalCenter(checkPos.x + 0.5f, checkPos.y + 1.0f, checkPos.z + 0.5f);
-
-        // Basic range filtering: skip if too far from target or player.
-        if (glm::distance(crystalCenter, targetCenter) > mPlaceRange.mValue) continue;
-        if (glm::distance(crystalCenter, playerPos) > mPlaceRangePlayer.mValue) continue;
-
-        // Validity check: ensure we can place a crystal at this block
-        if (!canPlaceCrystal(checkPos, runtimeActors)) continue;
-
-        // Compute the (clamped) damage the explosion would do to the target.
-        float candidateDamage = calculateDamage(checkPos, targetActor);
-        if (candidateDamage < mMinimumDamage.mValue) continue;
-
-        // Compute a composite score:
-        //   Higher damage is better; also, being closer to the target is preferred.
-        float distToTarget = glm::distance(crystalCenter, targetCenter);
-        float score = candidateDamage - (distToTarget * 0.1f);  // tweak the factor as needed
-
-        if (!foundCandidate || score > bestScore) {
-            bestScore = score;
-            bestCandidate = PlacePosition(checkPos, candidateDamage, 0.0f);
-            foundCandidate = true;
+        // If any candidate was found in this layer, sort them and take the best.
+        if (!layerCandidates.empty()) {
+            std::sort(layerCandidates.begin(), layerCandidates.end(),
+                [](const PlacePosition& a, const PlacePosition& b) {
+                    // First sort by descending target damage.
+                    if (a.targetDamage != b.targetDamage)
+                        return a.targetDamage > b.targetDamage;
+                    // Then sort by ascending distance from the player.
+                    return a.position < b.position;
+                });
+            bestCandidates.push_back(layerCandidates.front());
+            foundCandidateInLayer = true;  // break out of the layer loop
         }
     }
-
-    if (foundCandidate) {
-        positions.push_back(bestCandidate);
-    }
-    return positions;
+    return bestCandidates;
 }
 std::vector<AutoCrystal::BreakTarget> AutoCrystal::findBreakTargets(const std::vector<Actor*>& runtimeActors) {
     std::vector<BreakTarget> breakTargets;
@@ -482,7 +492,7 @@ void AutoCrystal::onBaseTickEvent(BaseTickEvent& event) {
         mActionDelayTicks = 2;
         return;
     }
-
+   
     // Grab the runtime actor list once.
     const auto& runtimeActors = level->getRuntimeActorList();
 

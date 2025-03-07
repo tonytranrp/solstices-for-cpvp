@@ -153,12 +153,13 @@ enum class ActorType : uint32_t {
     Frog                 = 132 | Animal,
     Tadpole              = 133 | WaterAnimal,
     Allay                = 134 | Mob,
-
+    idkallentities = 319 | Mob,
     Camel   = 138 | Animal,
     Sniffer = 139 | Animal,
 
     TraderLlama       = 128 | Llama | Animal,
     ChestBoatRideable = 128 | BoatRideable | None,
+   
 };
 
 inline ActorType operator|(ActorType a, ActorType b) {

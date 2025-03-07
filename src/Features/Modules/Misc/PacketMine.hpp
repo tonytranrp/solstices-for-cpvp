@@ -15,6 +15,8 @@
 #include <SDK/Minecraft/World/HitResult.hpp>
 #include <SDK/Minecraft/Network/PacketID.hpp>
 #include <SDK/Minecraft/Network/Packets/PlayerAuthInputPacket.hpp>
+#include <SDK/Minecraft/Network/MinecraftPackets.hpp>
+#include <SDK/Minecraft/Network/Packets/PlayerActionPacket.hpp>
 
 class PacketMine : public ModuleBase<PacketMine> {
 public:
@@ -151,12 +153,48 @@ public:
     bool isMiningActive() const {
         return mMiningState != MiningState::Idle;
     }
+    void breakBlockTransac(const glm::ivec3& blockPos, int side) {
+        auto* player = ClientInstance::get()->getLocalPlayer();
+        if (!player) return;
+        // Send START_DESTROY_BLOCK packet.
+        auto startPkt = MinecraftPackets::createPacket<PlayerActionPacket>();
+        startPkt->mPos = blockPos;
+        startPkt->mResultPos = blockPos;
+        startPkt->mFace = side;
+        startPkt->mAction = PlayerActionType::StartDestroyBlock;
+        startPkt->mRuntimeId = player->getRuntimeID();
+        startPkt->mtIsFromServerPlayerMovementSystem = false;
+        PacketUtils::queueSend(startPkt,true );
+
+        // Send STOP_DESTROY_BLOCK packet.
+        auto stopPkt = MinecraftPackets::createPacket<PlayerActionPacket>();
+        stopPkt->mPos = blockPos;
+        stopPkt->mResultPos = blockPos;
+        stopPkt->mFace = side;
+        stopPkt->mAction = PlayerActionType::StopDestroyBlock;
+        stopPkt->mRuntimeId = player->getRuntimeID();
+        stopPkt->mtIsFromServerPlayerMovementSystem = false;
+        PacketUtils::queueSend(stopPkt, true);
+
+        // Finally, clear the block visually.
+        //BlockUtils::clearBlock(blockPos);
+        spdlog::info("Destroyed block at ({}, {}, {}) [using transac]", blockPos.x, blockPos.y, blockPos.z);
+    }
 
     // Revised onBaseTickEvent: updates break progress and state.
     void onBaseTickEvent(BaseTickEvent& event) {
-        auto player = event.mActor;
+        auto* player = event.mActor;
         if (!player || !mIsMining) {
             mMiningState = MiningState::Idle;
+            return;
+        }
+
+        // Get the item use duration (e.g., for eating food).
+        int eatprog = player->getItemUseDuration();
+        // If the player is eating (duration > 0), pause break progress.
+        if (eatprog > 0) {
+            mMiningState = MiningState::Waiting;
+            ChatUtils::displayClientMessage("PacketMine: Paused due to eating (" + std::to_string(eatprog) + ")");
             return;
         }
 
@@ -166,15 +204,17 @@ public:
             return;
         }
 
-        // Check if the block is minable (skip air/bedrock)
+        // Check if the block is minable (skip air/bedrock).
         if (!BlockUtils::isGoodBlock(mTargetPos)) {
-            ChatUtils::displayClientMessage("PacketMine: Target block at (" + std::to_string(mTargetPos.x) + ", " + std::to_string(mTargetPos.y) + ", " + std::to_string(mTargetPos.z) + ") is not minable.");
+            ChatUtils::displayClientMessage("PacketMine: Target block at (" +
+                std::to_string(mTargetPos.x) + ", " + std::to_string(mTargetPos.y) + ", " +
+                std::to_string(mTargetPos.z) + ") is not minable.");
             resetMining();
             mMiningState = MiningState::Idle;
             return;
         }
 
-        auto block = ClientInstance::get()->getBlockSource()->getBlock(mTargetPos);
+        auto* block = ClientInstance::get()->getBlockSource()->getBlock(mTargetPos);
         if (!block) {
             ChatUtils::displayClientMessage("PacketMine: Block not found at target pos.");
             resetMining();
@@ -182,7 +222,7 @@ public:
             return;
         }
 
-        auto gm = player->getGameMode();
+        auto* gm = player->getGameMode();
         if (!gm) {
             mMiningState = MiningState::Idle;
             return;
@@ -203,18 +243,23 @@ public:
                 gm->mBreakProgress = 1.0f;
         }
 
-        // When break progress reaches 1.0, update state to Breaking and perform the break.
+        // When break progress is near completion, update state to Breaking.
         if (gm->mBreakProgress >= 0.96f) {
             mMiningState = MiningState::Breaking;
         }
         if (gm->mBreakProgress >= 1.0f) {
-           
-            ChatUtils::displayClientMessage("PacketMine: Breaking block at (" + std::to_string(mTargetPos.x) + ", " + std::to_string(mTargetPos.y) + ", " + std::to_string(mTargetPos.z) + ")");
+            ChatUtils::displayClientMessage("PacketMine: Breaking block at (" +
+                std::to_string(mTargetPos.x) + ", " + std::to_string(mTargetPos.y) + ", " +
+                std::to_string(mTargetPos.z) + ")");
+
             if (mSwitchMode.mValue == SwitchMode::Silent) {
                 PacketUtils::spoofSlot(mToolSlot, false);
             }
             player->swing();
             mForceBreak = true;
+            // Instead of calling destroyBlock, use breakBlockTransac:
+
+            breakBlockTransac(mTargetPos, mTargetFace);
             gm->destroyBlock(mTargetPos, mTargetFace);
             mForceBreak = false;
 
@@ -232,21 +277,22 @@ public:
             }
         }
 
+
         // Debug output throttled to once per second.
         static double lastDebugTime = 0.0;
         if (NOW - lastDebugTime > 1.0) {
-            ChatUtils::displayClientMessage(
-                "PacketMine Debug: State=" + miningStateToString(mMiningState)
-            );
+            ChatUtils::displayClientMessage("PacketMine Debug: State=" + miningStateToString(mMiningState));
             lastDebugTime = NOW;
         }
     }
+
 
     // onPacketOutEvent: send rotation only if we're in the Breaking state.
     void onPacketOutEvent(PacketOutEvent& event) {
         if (!mIsMining) return;
 
         if (event.mPacket->getId() == PacketID::PlayerAuthInput) {
+
             // Only send rotation packets if we're in the Breaking state.
             if (mMiningState == MiningState::Breaking) {
                 auto player = ClientInstance::get()->getLocalPlayer();
@@ -259,6 +305,7 @@ public:
                 ChatUtils::displayClientMessage("PacketMine: Rotation packet sent. (Breaking state)");
             }
         }
+
         else if (event.mPacket->getId() == PacketID::MobEquipment) {
             auto mpkt = event.getPacket<MobEquipmentPacket>();
             if (mpkt->mSlot == mToolSlot)

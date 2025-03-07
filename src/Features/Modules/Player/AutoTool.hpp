@@ -23,7 +23,6 @@ public:
     };
 
     int mOldSlot = -1;
-
     void onEnable() override;
     void onDisable() override;
     void onBaseTickEvent(class BaseTickEvent& event);

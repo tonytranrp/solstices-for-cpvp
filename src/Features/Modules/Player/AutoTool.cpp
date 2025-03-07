@@ -32,8 +32,6 @@ void AutoTool::onDisable()
 void AutoTool::onBaseTickEvent(BaseTickEvent& event)
 {
     auto player = event.mActor;
-
-
     if (!player->isDestroying())
     {
         if (mOldSlot != -1)
@@ -47,7 +45,7 @@ void AutoTool::onBaseTickEvent(BaseTickEvent& event)
     //Keyboard::SimulateKey(ImGuiKey_W,true);
     auto blockSource = ClientInstance::get()->getBlockSource();
     auto blockPos = player->getLevel()->getHitResult()->mBlockPos;
-
+   
     auto block = blockSource->getBlock(blockPos);
     if (!block) return;
 
@@ -56,6 +54,6 @@ void AutoTool::onBaseTickEvent(BaseTickEvent& event)
 
     if (mOldSlot == -1) mOldSlot = player->getSupplies()->mSelectedSlot;
     else if (mFakeSpoof.mValue) player->getSupplies()->mInHandSlot = mOldSlot;
-
+   
     player->getSupplies()->mSelectedSlot = bestSlot;
 }

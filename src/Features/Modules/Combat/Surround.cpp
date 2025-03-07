@@ -1,8 +1,8 @@
 #include "Surround.hpp"
-
 #include <imgui.h>
 #include <cmath>
 #include <vector>
+#include <unordered_set>
 #include <glm/glm.hpp>
 
 #include <Features/Events/BaseTickEvent.hpp>
@@ -12,18 +12,32 @@
 #include <SDK/Minecraft/World/BlockSource.hpp>
 #include <SDK/Minecraft/Inventory/PlayerInventory.hpp>
 #include <SDK/Minecraft/Network/Packets/InventoryTransactionPacket.hpp>
-
+#include <SDK/Minecraft/Network/Packets/PlayerAuthInputPacket.hpp>
 #include <Utils/GameUtils/ItemUtils.hpp>
+#include <Utils/GameUtils/ActorUtils.hpp>
 
+// A hash functor for glm::ivec3 so we can store it in an unordered_set.
+struct Vec3iHash {
+    std::size_t operator()(const glm::ivec3& v) const {
+        std::size_t h1 = std::hash<int>()(v.x);
+        std::size_t h2 = std::hash<int>()(v.y);
+        std::size_t h3 = std::hash<int>()(v.z);
+        return h1 ^ (h2 << 1) ^ (h3 << 2);
+    }
+};
 
-// Constructor: add settings and register the module name(s)
-Surround::Surround() : ModuleBase("Surround", "Places blocks around you for protection", ModuleCategory::Player, 0, false) {
+Surround::Surround()
+    : ModuleBase("Surround", "Places blocks around you for protection", ModuleCategory::Player, 0, false)
+{
     addSettings(
         &mCenter,
         &mDisableComplete,
         &mSwitchMode,
         &mRender,
-        &mPlaceAbove
+        &mPlaceAbove,
+        &mDynamic,
+        &mRange,
+        &mRotate
     );
     mNames = {
         {Lowercase, "surround"},
@@ -31,15 +45,13 @@ Surround::Surround() : ModuleBase("Surround", "Places blocks around you for prot
         {Normal, "Surround"},
         {NormalSpaced, "Surround"}
     };
-    // Listen for render events (if not already registered in onEnable)
     gFeatureManager->mDispatcher->listen<RenderEvent, &Surround::onRenderEvent>(this);
 }
 
 void Surround::onEnable() {
     auto* player = ClientInstance::get()->getLocalPlayer();
     if (!player) return;
-
-    // Center the player on the block grid if enabled
+    // If centering is enabled, snap the player to the center of their current block.
     if (mCenter.mValue) {
         auto pos = *player->getPos();
         pos.x = floor(pos.x) + 0.5f;
@@ -56,109 +68,134 @@ void Surround::onDisable() {
     mBlocksToPlace.clear();
 }
 
-//
-// onBaseTickEvent: Calculate the surround positions and attempt block placement.
-//
 void Surround::onBaseTickEvent(BaseTickEvent& event) {
     auto* player = ClientInstance::get()->getLocalPlayer();
     if (!player) return;
 
     mBlocksToPlace.clear();
 
-    // Get the player's current block position.
-    // We use the player's feet position (subtract 1 from Y) so that the surround is placed around the base.
-    glm::ivec3 basePos = glm::floor(*player->getPos());
-    basePos.y -= 1;
+    // Get the player's base position:
+    // Floor the player's position and subtract 1 from Y to get the block under their feet.
+    glm::vec3 playerPosF = *player->getPos();
+    playerPosF = glm::floor(playerPosF);
+    playerPosF.y -= 1.0f;
+    glm::ivec3 playerBasePos = glm::ivec3(playerPosF);
 
-    // Define the offsets (relative block positions) for the surround.
-    // Four horizontal sides plus one below.
-    static const std::vector<glm::ivec3> offsets = {
-        { 1, 0, 0},
-        { 0, 0, 1},
-        {-1, 0, 0},
-        { 0, 0, -1},
-        { 0, -1, 0}
+    // Retrieve the player's AABB.
+    AABB playerAABB = player->getAABB();
+
+    // We'll use an unordered_set to avoid duplicate positions.
+    std::unordered_set<glm::ivec3, Vec3iHash> blocksSet;
+
+    // Define side offsets (similar to sideBlocks in the Java code).
+    std::vector<glm::vec3> sideOffsets = {
+        glm::vec3(1, 0, 0),
+        glm::vec3(0, 0, 1),
+        glm::vec3(-1, 0, 0),
+        glm::vec3(0, 0, -1)
     };
 
-    // Check each surrounding position
-    for (const auto& offset : offsets) {
-        glm::ivec3 pos = basePos + offset;
-        auto* bs = ClientInstance::get()->getBlockSource();
-        if (!bs) continue;
-        auto* block = bs->getBlock(pos);
-        if (!block) continue;
-        int blockId = block->mLegacy->getBlockId();
-        // Assume block ID 0 means air (replace with your project’s air ID if different)
-        if (blockId == 0) {
-            mBlocksToPlace.push_back(pos);
-        }
-    }
+    // Helper lambda to add a position to the set.
+    auto addBlockToPlace = [&](const glm::ivec3& pos) {
+        blocksSet.insert(pos);
+        };
 
-    // Optionally add a block above the player's head
-    if (mPlaceAbove.mValue) {
-        glm::ivec3 abovePos = basePos + glm::ivec3(0, 2, 0);
-        auto* bs = ClientInstance::get()->getBlockSource();
-        if (bs) {
-            auto* block = bs->getBlock(abovePos);
-            if (block && block->mLegacy->getBlockId() == 0) {
-                mBlocksToPlace.push_back(abovePos);
+    // For each side offset, check intersections with the player's AABB.
+    for (const auto& offset : sideOffsets) {
+        glm::ivec3 posToCheck = playerBasePos + glm::ivec3(static_cast<int>(offset.x), static_cast<int>(offset.y), static_cast<int>(offset.z));
+        // Construct an AABB for this block position.
+        glm::vec3 lower = glm::vec3(posToCheck);
+        glm::vec3 upper = lower + glm::vec3(1.0f);
+        AABB blockAABB(lower, upper, true);
+
+        if (playerAABB.intersects(blockAABB)) {
+            // If player's AABB intersects the block, add an extra offset block.
+            addBlockToPlace(posToCheck + glm::ivec3(static_cast<int>(offset.x), static_cast<int>(offset.y), static_cast<int>(offset.z)));
+            // Additionally, try to add side and corner positions.
+            for (int i : {-1, 1}) {
+                for (int j : {-1, 1}) {
+                    glm::ivec3 sidePos = posToCheck + glm::ivec3(static_cast<int>(offset.z) * i, static_cast<int>(offset.y), static_cast<int>(offset.x) * j);
+                    addBlockToPlace(sidePos);
+
+                    glm::ivec3 cornerPos = posToCheck + glm::ivec3(static_cast<int>(offset.z) * i, static_cast<int>(offset.y), static_cast<int>(offset.x) * j);
+                    glm::vec3 cornerLower = glm::vec3(cornerPos);
+                    glm::vec3 cornerUpper = cornerLower + glm::vec3(1.0f);
+                    AABB cornerAABB(cornerLower, cornerUpper, true);
+                    if (playerAABB.intersects(cornerAABB)) {
+                        glm::ivec3 adjustedPos = cornerPos + glm::ivec3(static_cast<int>(offset.z) * i, 0, static_cast<int>(offset.x) * j);
+                        addBlockToPlace(adjustedPos);
+                    }
+                }
             }
         }
+        else {
+            addBlockToPlace(posToCheck);
+        }
     }
 
-    // Attempt to place blocks at each position.
+    // If PlaceAbove is enabled, add the block above the player's head.
+    if (mPlaceAbove.mValue) {
+        glm::ivec3 abovePos = playerBasePos + glm::ivec3(0, 2, 0);
+        addBlockToPlace(abovePos);
+    }
+
+    // Convert the set into our mBlocksToPlace vector.
+    mBlocksToPlace.assign(blocksSet.begin(), blocksSet.end());
+
+    // Now, for each candidate position, validate and place the block.
+    auto* bs = ClientInstance::get()->getBlockSource();
+    if (!bs) return;
     for (const auto& pos : mBlocksToPlace) {
+        auto* block = bs->getBlock(pos);
+        if (!block) continue;
+        // Assuming block ID 0 means air.
+        if (block->mLegacy->getBlockId() != 0)
+            continue;
         placeBlockAt(pos);
     }
 
-    // If the module should disable when complete and there are no blocks to place, turn off the module.
+    // Optionally disable the module if there are no blocks to place.
     if (mDisableComplete.mValue && mBlocksToPlace.empty()) {
         this->setEnabled(false);
     }
 }
 
-//
-// placeBlockAt: Uses BlockUtils::placeBlock to place a block with proper placement checks and packet handling.
-// It also supports hotbar switching modes (None, Full, Silent).
-//
 void Surround::placeBlockAt(const glm::ivec3& pos) {
     auto* player = ClientInstance::get()->getLocalPlayer();
     if (!player) return;
 
-    // Check if the position is valid and air.
+    // Validate that the block can be placed here.
     if (!BlockUtils::isValidPlacePos(pos)) return;
     if (!BlockUtils::isAirBlock(pos)) return;
     int side = BlockUtils::getBlockPlaceFace(pos);
-    if (side == -1) return;
+    // If no valid face, try to “snap” to a nearby support block.
+    if (side == -1) {
+        glm::vec3 supportPosF = BlockUtils::getClosestPlacePos(glm::vec3(pos),4);
+        glm::ivec3 supportPos = glm::ivec3(supportPosF);
+        side = BlockUtils::getBlockPlaceFace(supportPos);
+        if (side == -1) return;
+    }
 
     int prevSlot = player->getSupplies()->mSelectedSlot;
-    // Handle switching if enabled (0 = None, 1 = Full, 2 = Silent)
+    // Handle hotbar switching.
     if (mSwitchMode.mValue != 0) {
-        // Try to find a placeable block at this position (e.g. obsidian)
-        int slot = ItemUtils::getPlaceableItemOnBlock(pos, false, false);
+        int slot = ItemUtils::getPlaceableItemOnBlock(glm::vec3(pos), false, false);
         if (slot == -1) return;
-        if (mSwitchMode.mValue == 1) { // Full mode
+        if (mSwitchMode.mValue == 1) { // Full mode.
             player->getSupplies()->mSelectedSlot = slot;
         }
-        else if (mSwitchMode.mValue == 2) { // Silent mode
+        else if (mSwitchMode.mValue == 2) { // Silent mode.
             PacketUtils::spoofSlot(slot);
         }
     }
 
-    // Use BlockUtils to place the block. This function performs proper packet placement
-    // and swing/rotation adjustments according to our client style.
+    // Place the block (this utility function handles sending the placement packet, swing animation, etc.).
     BlockUtils::placeBlock(glm::vec3(pos), side);
 
-    // If in Full switch mode, switch back to the previous slot.
     if (mSwitchMode.mValue == 1) {
         player->getSupplies()->mSelectedSlot = prevSlot;
     }
 }
-
-//
-// onPacketOutEvent: Adjust outgoing block placement packets to randomize click offsets,
-// following our Scaffold’s packet modification style.
-//
 void Surround::onPacketOutEvent(PacketOutEvent& event) {
     auto* packet = event.mPacket;
     if (packet->getId() == PacketID::InventoryTransaction) {
@@ -166,30 +203,27 @@ void Surround::onPacketOutEvent(PacketOutEvent& event) {
         if (!pkt || !pkt->mTransaction) return;
         if (pkt->mTransaction->type == ComplexInventoryTransaction::Type::ItemUseTransaction) {
             auto* transac = reinterpret_cast<ItemUseInventoryTransaction*>(pkt->mTransaction.get());
-            // Set click position based on face offset
             transac->mClickPos = BlockUtils::clickPosOffsets[transac->mFace];
-            // Randomize any 0.5 values to help bypass anti-cheat checks
             for (int i = 0; i < 3; i++) {
                 if (transac->mClickPos[i] == 0.5f) {
                     transac->mClickPos[i] = MathUtils::randomFloat(-0.49f, 0.49f);
                 }
             }
+            transac->mClickPos.y -= 0.1f;
         }
     }
-    // (Optionally, add rotation adjustments for PlayerAuthInput packets here if needed.)
+   
 }
 
-//
-// onRenderEvent: Renders an outline for each block position that we’re trying to place.
-//
 void Surround::onRenderEvent(RenderEvent& event) {
     if (!mRender.mValue || mBlocksToPlace.empty()) return;
-    auto drawList = ImGui::GetBackgroundDrawList();
+    ImDrawList* drawList = ImGui::GetBackgroundDrawList();
+    if (!drawList) return;
     for (const auto& pos : mBlocksToPlace) {
         glm::vec3 lower(pos.x, pos.y, pos.z);
-        glm::vec3 upper = lower + glm::vec3(1.0f, 1.0f, 1.0f);
+        glm::vec3 upper = lower + glm::vec3(1.0f);
         AABB box(lower, upper, true);
-        // Draw an outlined box using a chosen color (adjust as necessary)
+        // Render an outlined box; adjust color as needed.
         RenderUtils::drawOutlinedAABB(box, true, ImColor(255, 99, 202, 255));
     }
 }
