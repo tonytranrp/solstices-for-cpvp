@@ -163,6 +163,7 @@ public:
     MobBodyRotationComponent* getMobBodyRotationComponent();
     JumpControlComponent* getJumpControlComponent();
     CameraComponent* getCameraComponent();
+    //ActorUniqueIDComponent getOwnerId()  ;
     CameraDirectLookComponent* getCameraDirectLookComponent();
     MaxAutoStepComponent* getMaxAutoStepComponent();
     MobHurtTimeComponent* getMobHurtTimeComponent();

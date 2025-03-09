@@ -419,7 +419,6 @@ void AutoCrystal::breakCrystal(Actor* crystal)
     // Record break target rotation information.
     mBreakTargetPos = *crystal->getPos();
     mHasBreakTarget = true;
-
     // If we are in silent mode & spoofing, do it once
     if (mSwitchMode.mValue == SwitchMode::Silent && mShouldSpoofSlot)
     {
@@ -439,7 +438,7 @@ void AutoCrystal::breakCrystal(Actor* crystal)
 
     // Predicted break
     mShouldIdPredict = true;
-    mLastAttackId = crystal->getRuntimeID();
+    mLastAttackId = crystal->getActorUniqueIDComponent()->mUniqueID;
 
     for (int i = 0; i < mPredictAmount.mValue; i++)
     {

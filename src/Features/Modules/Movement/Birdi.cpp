@@ -120,43 +120,55 @@ void Birdi::OnGlideEvents(ElytraGlideEvent& event) {
     // Movement input tracking
     bool isMoving = Keyboard::isUsingMoveKeys(true);
 
-    // Acceleration logic only resets on takeoff, not when stopping movement
-    if (useAcceleration.mValue && !accelerating && isMoving) {
-        accelerationTimer += 1.0f;
-        if (accelerationTimer >= accelerationFactor.mValue) {
-            accelerating = true;
-            accelerationTimer = 0.0f;
-        }
-    }
-
+    // Improved acceleration logic with smoother transitions
     float targetSpeed = (SpeedX.mValue / 10.0f);
-
-    // During acceleration phase, add a short ramp-up
-    if (accelerating) {
-        if (accelerationTimer < 3) {
-            targetSpeed *= 0.1f * (accelerationTimer + 1);
-            accelerationTimer += 1.0f;
+    
+    if (useAcceleration.mValue) {
+        if (isMoving) {
+            // Gradual acceleration when moving
+            if (!accelerating) {
+                accelerating = true;
+                accelerationTimer = 0.0f;
+            }
+            
+            // Smooth acceleration curve
+            if (accelerationTimer < accelerationFactor.mValue) {
+                float progress = accelerationTimer / accelerationFactor.mValue;
+                // Apply easing function for smoother acceleration
+                float easedProgress = progress * progress * (3.0f - 2.0f * progress);
+                targetSpeed *= easedProgress;
+                accelerationTimer += 1.0f;
+            }
+        } else {
+            // Gradual deceleration when not moving
+            if (accelerating) {
+                accelerating = false;
+                accelerationTimer = accelerationFactor.mValue;
+            }
+            
+            // Smooth deceleration
+            if (accelerationTimer > 0.0f) {
+                float progress = accelerationTimer / accelerationFactor.mValue;
+                // Apply easing function for smoother deceleration
+                float easedProgress = progress * progress * (3.0f - 2.0f * progress);
+                targetSpeed *= easedProgress;
+                accelerationTimer = std::max(0.0f, accelerationTimer - 1.0f);
+            } else {
+                targetSpeed = 0.0f;
+            }
         }
     }
-    else {
-        targetSpeed = 0.0f;
-    }
 
-    if (isMoving) {
+    if (isMoving || accelerationTimer > 0.0f) {
         glm::vec2 calc = MathUtils::getMotion(player->getActorRotationComponent()->mYaw, targetSpeed);
         motion.x = calc.x;
         motion.z = calc.y;
     }
-    else {
-        motion.x = 0.0f;
-        motion.z = 0.0f;
-    }
 
-    // Vertical control
+    // Vertical control with consistent speed
     if (isSpacePressed) {
         motion.y += SpeedY.mValue / 10.0f;
-    }
-    else if (isShiftPressed) { // Use our new Shift variable instead of `mIsSneakDown`
+    } else if (isShiftPressed) {
         motion.y -= SpeedY.mValue / 10.0f;
     }
 
@@ -214,8 +226,8 @@ void Birdi::onPacketOutEvent(PacketOutEvent& event) const {
             if (!player->isOnGround() && fallDist >= fallDistanceThreshold.mValue) {
                 paip->mInputData |= AuthInputAction::START_GLIDING;
                 //paip->mInputData |= AuthInputAction::START_FLYING;
-                paip->mInputData &= ~AuthInputAction::STOP_GLIDING;
-                //paip->mInputData &= ~AuthInputAction::STOP_FLYING;
+                //paip->mInputData &= ~AuthInputAction::STOP_GLIDING;
+                paip->mInputData &= ~AuthInputAction::STOP_FLYING;
                 ChatUtils::displayClientMessage("[Fly] START_GLIDING (fallDist={:.2f}, threshold={:.2f})", fallDist, fallDistanceThreshold.mValue);
                 spdlog::debug("[Fly] START_GLIDING (fallDist={:.2f}, threshold={:.2f})", fallDist, fallDistanceThreshold.mValue);
             }

@@ -114,8 +114,11 @@ void Actor::setDebugCameraActive(bool active)
         storage->remove(this->mContext.mEntityId);
     }
 }
-
-
+/*//public: struct ActorUniqueID const __cdecl Actor::getOwnerId(void)const __ptr64
+const ActorUniqueIDComponent& Actor::getOwnerId() {
+    static auto func = SigManager::ActorGetOwnerID;
+    return MemUtils::callFastcall<ActorUniqueIDComponent>(func, this);
+}*/
 int Actor::getSwingProgress()
 {
     return hat::member_at<int>(this, OffsetProvider::Actor_mSwinging + 0x4);

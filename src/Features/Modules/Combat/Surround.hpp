@@ -27,6 +27,8 @@ public:
     NumberSetting mRange = NumberSetting("Range", "Range for dynamic surround (outer ring)", 1, 1, 4, 1);
     // Rotation: rotate to each placement position.
     BoolSetting mRotate = BoolSetting("Rotate", "Rotate to block placement positions", true);
+    // Stability threshold: how much the player can move before recalculating placements
+    NumberSetting mStabilityThreshold = NumberSetting("Stability", "Movement threshold before recalculating (blocks)", 0.15f, 0.0f, 1.0f, 0.01f);
 
     Surround();
 
@@ -37,10 +39,31 @@ public:
     void onRenderEvent(class RenderEvent& event) ;
 
 private:
+    // A hash functor for glm::ivec3 so we can store it in an unordered_set.
+    struct Vec3iHash {
+        std::size_t operator()(const glm::ivec3& v) const {
+            std::size_t h1 = std::hash<int>()(v.x);
+            std::size_t h2 = std::hash<int>()(v.y);
+            std::size_t h3 = std::hash<int>()(v.z);
+            return h1 ^ (h2 << 1) ^ (h3 << 2);
+        }
+    };
     // List of world block positions (as ivec3) to place blocks.
     std::vector<glm::ivec3> mBlocksToPlace;
-
+    
+    // Last player position used for stability calculations
+    glm::vec3 mLastPlayerPos = glm::vec3(0.0f);
+    
+    // Last calculated base position
+    glm::ivec3 mLastBasePos = glm::ivec3(0);
+    
     // Places a block at a given world coordinate.
     void placeBlockAt(const glm::ivec3& pos);
+    
+    // Generates dynamic surround positions based on range
+    void generateDynamicPositions(const glm::ivec3& basePos, std::unordered_set<glm::ivec3, Vec3iHash>& blocksSet);
+    
+    // Checks if the player has moved significantly from last position
+    bool hasPlayerMovedSignificantly(const glm::vec3& currentPos);
 };
 

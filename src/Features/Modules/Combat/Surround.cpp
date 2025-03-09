@@ -16,15 +16,7 @@
 #include <Utils/GameUtils/ItemUtils.hpp>
 #include <Utils/GameUtils/ActorUtils.hpp>
 
-// A hash functor for glm::ivec3 so we can store it in an unordered_set.
-struct Vec3iHash {
-    std::size_t operator()(const glm::ivec3& v) const {
-        std::size_t h1 = std::hash<int>()(v.x);
-        std::size_t h2 = std::hash<int>()(v.y);
-        std::size_t h3 = std::hash<int>()(v.z);
-        return h1 ^ (h2 << 1) ^ (h3 << 2);
-    }
-};
+
 
 Surround::Surround()
     : ModuleBase("Surround", "Places blocks around you for protection", ModuleCategory::Player, 0, false)
@@ -37,7 +29,8 @@ Surround::Surround()
         &mPlaceAbove,
         &mDynamic,
         &mRange,
-        &mRotate
+        &mRotate,
+        &mStabilityThreshold
     );
     mNames = {
         {Lowercase, "surround"},
@@ -72,14 +65,29 @@ void Surround::onBaseTickEvent(BaseTickEvent& event) {
     auto* player = ClientInstance::get()->getLocalPlayer();
     if (!player) return;
 
+    // Get the player's current position
+    glm::vec3 playerPos = *player->getPos();
+    
+    // Check if player has moved significantly since last calculation
+    if (!hasPlayerMovedSignificantly(playerPos)) {
+        // Player hasn't moved enough to warrant recalculation
+        return;
+    }
+    
+    // Update last position for next check
+    mLastPlayerPos = playerPos;
+    
     mBlocksToPlace.clear();
 
     // Get the player's base position:
     // Floor the player's position and subtract 1 from Y to get the block under their feet.
-    glm::vec3 playerPosF = *player->getPos();
+    glm::vec3 playerPosF = playerPos;
     playerPosF = glm::floor(playerPosF);
     playerPosF.y -= 1.0f;
     glm::ivec3 playerBasePos = glm::ivec3(playerPosF);
+    
+    // Store the current base position for stability checks
+    mLastBasePos = playerBasePos;
 
     // Retrieve the player's AABB.
     AABB playerAABB = player->getAABB();
@@ -98,38 +106,45 @@ void Surround::onBaseTickEvent(BaseTickEvent& event) {
     // Helper lambda to add a position to the set.
     auto addBlockToPlace = [&](const glm::ivec3& pos) {
         blocksSet.insert(pos);
-        };
+    };
 
-    // For each side offset, check intersections with the player's AABB.
-    for (const auto& offset : sideOffsets) {
-        glm::ivec3 posToCheck = playerBasePos + glm::ivec3(static_cast<int>(offset.x), static_cast<int>(offset.y), static_cast<int>(offset.z));
-        // Construct an AABB for this block position.
-        glm::vec3 lower = glm::vec3(posToCheck);
-        glm::vec3 upper = lower + glm::vec3(1.0f);
-        AABB blockAABB(lower, upper, true);
-
-        if (playerAABB.intersects(blockAABB)) {
-            // If player's AABB intersects the block, add an extra offset block.
-            addBlockToPlace(posToCheck + glm::ivec3(static_cast<int>(offset.x), static_cast<int>(offset.y), static_cast<int>(offset.z)));
-            // Additionally, try to add side and corner positions.
-            for (int i : {-1, 1}) {
-                for (int j : {-1, 1}) {
-                    glm::ivec3 sidePos = posToCheck + glm::ivec3(static_cast<int>(offset.z) * i, static_cast<int>(offset.y), static_cast<int>(offset.x) * j);
-                    addBlockToPlace(sidePos);
-
-                    glm::ivec3 cornerPos = posToCheck + glm::ivec3(static_cast<int>(offset.z) * i, static_cast<int>(offset.y), static_cast<int>(offset.x) * j);
-                    glm::vec3 cornerLower = glm::vec3(cornerPos);
-                    glm::vec3 cornerUpper = cornerLower + glm::vec3(1.0f);
-                    AABB cornerAABB(cornerLower, cornerUpper, true);
-                    if (playerAABB.intersects(cornerAABB)) {
-                        glm::ivec3 adjustedPos = cornerPos + glm::ivec3(static_cast<int>(offset.z) * i, 0, static_cast<int>(offset.x) * j);
-                        addBlockToPlace(adjustedPos);
+    // Check if we should use dynamic placement or standard placement
+    if (mDynamic.mValue) {
+        // Use dynamic placement (perimeter-only)
+        generateDynamicPositions(playerBasePos, blocksSet);
+    } else {
+        // Standard placement logic
+        // For each side offset, check intersections with the player's AABB.
+        for (const auto& offset : sideOffsets) {
+            glm::ivec3 posToCheck = playerBasePos + glm::ivec3(static_cast<int>(offset.x), static_cast<int>(offset.y), static_cast<int>(offset.z));
+            
+            // Always add the basic side blocks without intersection checks
+            // This ensures a consistent 2x2 pattern regardless of minor movements
+            addBlockToPlace(posToCheck);
+            
+            // Only check for extended placements if we're at an edge or corner
+            // This prevents unnecessary interior blocks
+            if (playerPos.x > posToCheck.x + 0.7f || playerPos.x < posToCheck.x + 0.3f ||
+                playerPos.z > posToCheck.z + 0.7f || playerPos.z < posToCheck.z + 0.3f) {
+                
+                // Add diagonal blocks only when player is near corners
+                for (int i : {-1, 1}) {
+                    for (int j : {-1, 1}) {
+                        // Calculate diagonal position
+                        glm::ivec3 diagPos = playerBasePos + glm::ivec3(i, 0, j);
+                        
+                        // Only add if player is actually near this corner
+                        float cornerDist = glm::distance(
+                            glm::vec2(playerPos.x, playerPos.z),
+                            glm::vec2(playerBasePos.x + i * 0.5f, playerBasePos.z + j * 0.5f)
+                        );
+                        
+                        if (cornerDist < 0.7f) {
+                            addBlockToPlace(diagPos);
+                        }
                     }
                 }
             }
-        }
-        else {
-            addBlockToPlace(posToCheck);
         }
     }
 
@@ -168,7 +183,7 @@ void Surround::placeBlockAt(const glm::ivec3& pos) {
     if (!BlockUtils::isValidPlacePos(pos)) return;
     if (!BlockUtils::isAirBlock(pos)) return;
     int side = BlockUtils::getBlockPlaceFace(pos);
-    // If no valid face, try to “snap” to a nearby support block.
+    // If no valid face, try to ï¿½snapï¿½ to a nearby support block.
     if (side == -1) {
         glm::vec3 supportPosF = BlockUtils::getClosestPlacePos(glm::vec3(pos),4);
         glm::ivec3 supportPos = glm::ivec3(supportPosF);
@@ -225,5 +240,46 @@ void Surround::onRenderEvent(RenderEvent& event) {
         AABB box(lower, upper, true);
         // Render an outlined box; adjust color as needed.
         RenderUtils::drawOutlinedAABB(box, true, ImColor(255, 99, 202, 255));
+    }
+}
+
+// Checks if the player has moved significantly from last position
+bool Surround::hasPlayerMovedSignificantly(const glm::vec3& currentPos) {
+    // If this is the first check, always return true
+    if (mLastPlayerPos == glm::vec3(0.0f)) {
+        return true;
+    }
+    
+    // Calculate distance between current position and last position
+    float distance = glm::distance(glm::vec2(currentPos.x, currentPos.z), glm::vec2(mLastPlayerPos.x, mLastPlayerPos.z));
+    
+    // Get the current base position (floor of player position)
+    glm::ivec3 currentBasePos = glm::ivec3(glm::floor(currentPos.x), glm::floor(currentPos.y) - 1, glm::floor(currentPos.z));
+    
+    // If the base position has changed, we should recalculate
+    bool baseChanged = currentBasePos != mLastBasePos;
+    
+    // Check if the player has moved more than the threshold or changed base position
+    return distance > mStabilityThreshold.mValue || baseChanged;
+}
+
+// Generates dynamic surround positions based on range
+void Surround::generateDynamicPositions(const glm::ivec3& basePos, std::unordered_set<glm::ivec3, Vec3iHash>& blocksSet) {
+    int range = static_cast<int>(mRange.mValue);
+    
+    // Generate only the perimeter blocks at the specified range
+    for (int x = -range; x <= range; x++) {
+        for (int z = -range; z <= range; z++) {
+            // Only add blocks that are on the perimeter (outer ring)
+            if (abs(x) == range || abs(z) == range) {
+                // Add block at the base level (feet level - 1)
+                blocksSet.insert(basePos + glm::ivec3(x, 0, z));
+                
+                // If place above is enabled, also add blocks at head level
+                if (mPlaceAbove.mValue) {
+                    blocksSet.insert(basePos + glm::ivec3(x, 3, z)); // Head level is typically 2 blocks above base
+                }
+            }
+        }
     }
 }
