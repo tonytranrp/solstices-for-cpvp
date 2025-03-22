@@ -3,12 +3,6 @@
 #include <Features/Events/ActorRenderEvent.hpp>
 #include <Hook/Hooks/RenderHooks/ActorRenderDispatcherHook.hpp>
 #include <spdlog/spdlog.h>
-
-FakePlayer::FakePlayer()
-    : ModuleBase<FakePlayer>("FakePlayer", "Render a static copy of your local player", ModuleCategory::Player, 0, false) {
-    // No extra initialization here.
-}
-
 void FakePlayer::onEnable() {
     auto* player = ClientInstance::get()->getLocalPlayer();
     if (!player) {
@@ -17,59 +11,53 @@ void FakePlayer::onEnable() {
         return;
     }
 
-    // Capture the player's render data once when enabling.
-    mSavedPos = player->getRenderPositionComponent()->mPosition;
-    mSavedAABBMin = player->getAABBShapeComponent()->mMin;
-    mSavedAABBMax = player->getAABBShapeComponent()->mMax;
+    mLastRot = *player->getActorRotationComponent();
+    mLastHeadRot = *player->getActorHeadRotationComponent();
+    mLastBodyRot = *player->getMobBodyRotationComponent();
+    aabb = player->getAABB();
+    mAABBMin = player->getAABBShapeComponent()->mMin;
+    mAABBMax = player->getAABBShapeComponent()->mMax;
+    mSvPos = player->getStateVectorComponent()->mPos;
+    mSvPosOld = player->getStateVectorComponent()->mPos;
+    mOldPos = player->getRenderPositionComponent()->mPosition;
+    aabbmin = mAABBMin;
+    aabbmax = mAABBMax;
+    mStaticPos = mOldPos;
 
-    auto* rot = player->getActorRotationComponent();
-    mSavedRot.mYaw = rot->mYaw;
-    mSavedRot.mPitch = rot->mPitch;
+    // Store static rotation
+    mStaticRot = mLastRot;
 
-    auto* headRot = player->getActorHeadRotationComponent();
-    mSavedHeadRot.mHeadRot = headRot->mHeadRot;
+    player->setFlag<RenderCameraComponent>(true);
+    player->setFlag<CameraRenderPlayerModelComponent>(true);
 
-    auto* bodyRot = player->getMobBodyRotationComponent();
-    mSavedBodyRot.mBodyRot = bodyRot->yBodyRot;
-
-    mSaved = true;
-    ChatUtils::displayClientMessage("FakePlayer enabled, saved local player render data.");
-
-    // Listen to the actor render event.
-    gFeatureManager->mDispatcher->listen<ActorRenderEvent, &FakePlayer::onActorRenderEvent>(this);
+    gFeatureManager->mDispatcher->listen<ActorRenderEvent, &FakePlayer::onActorRenderEvent, nes::event_priority::VERY_FIRST>(this);
 }
 
 void FakePlayer::onDisable() {
-    // Stop listening to the render event.
+    auto* player = ClientInstance::get()->getLocalPlayer();
+    if (player) {
+        player->setFlag<CameraRenderPlayerModelComponent>(false);
+        player->setFlag<RenderCameraComponent>(false);
+    }
+
     gFeatureManager->mDispatcher->deafen<ActorRenderEvent, &FakePlayer::onActorRenderEvent>(this);
-    mSaved = false;
     ChatUtils::displayClientMessage("FakePlayer disabled.");
 }
 
 void FakePlayer::onActorRenderEvent(ActorRenderEvent& event) {
-    auto* player = ClientInstance::get()->getLocalPlayer();
+    auto player = ClientInstance::get()->getLocalPlayer();
     if (!player) return;
 
-    // Process only if the entity being rendered is the local player.
     if (event.mEntity != player) return;
-    if (!mSaved) return;
 
-    // Retrieve the original render function from the detour.
     auto original = event.mDetour->getOriginal<&ActorRenderDispatcherHook::render>();
-    if (!original) {
-        spdlog::error("[FakePlayer] Unable to retrieve original render function.");
-        return;
-    }
 
-    // Use our saved position and rotation.
-    glm::vec3 fakePos = mSavedPos;
-    glm::vec2 fakeRot(mSavedRot.mYaw, mSavedRot.mPitch);
-
-    // Optionally, add a slight offset (e.g. 0.2 blocks to the side) so that the fake copy is visible.
-    fakePos.x += 0.2f;
-
-    // Render the fake (static) copy.
-    original(event._this, event.mEntityRenderContext, event.mEntity, event.mCameraTargetPos, &fakePos, &fakeRot, event.mIgnoreLighting);
-
-    // Do not cancel the event so that the actual local player also renders.
+    // Use stored static position and rotation
+    auto staticPos = mStaticPos - *event.mCameraTargetPos;
+    auto staticRot = glm::vec2(mStaticRot.mPitch, mStaticRot.mYaw) - *event.mRot;
+   // glm::vec2 staticRot(mStaticRot.mPitch, mStaticRot.mYaw);
+    auto rots = glm::vec2{ 0,45 };
+    auto mCameraTargetPos = glm::vec3{ 0,5,0 };
+    original(event._this, event.mEntityRenderContext, event.mEntity, &mCameraTargetPos, &staticPos, &rots, event.mIgnoreLighting);
+    event.cancel();
 }

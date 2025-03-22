@@ -71,7 +71,7 @@ bool Regen::isValidBlock(glm::ivec3 blockPos, bool redstoneOnly, bool exposedOnl
     if (redstoneOnly) {
         if (!isRedstone) return false;
     }
-
+    //https://www.youtube.com/watch?v=d06BvVJ6zD4
     // Distance Check
     AABB blockAABB = AABB(blockPos, glm::vec3(1, 1, 1));
     glm::vec3 closestPos = blockAABB.getClosestPoint(*player->getPos());

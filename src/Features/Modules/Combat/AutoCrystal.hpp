@@ -210,13 +210,13 @@ private:
     void switchToCrystal();
     void switchBack();
 
-    float calculateDamage(const BlockPos& crystalPos, Actor* target);
-    bool canPlaceCrystal(const BlockPos& pos, const std::vector<Actor*>& runtimeActors);
-    std::vector<PlacePosition> findPlacePositions(const std::vector<Actor*>& runtimeActors);
-    std::vector<BreakTarget> findBreakTargets(const std::vector<Actor*>& runtimeActors);
+    float calculateDamage(const BlockPos& crystalPos, Actor* target,bool isfakeplayer);
+    bool canPlaceCrystal(const BlockPos& pos, const std::vector<Actor*>& runtimeActors,bool isfakeplayer);
+    std::vector<PlacePosition> findPlacePositions(const std::vector<Actor*>& runtimeActors, bool isfakeplayer);
+    std::vector<BreakTarget> findBreakTargets(const std::vector<Actor*>& runtimeActors, bool isfakeplayer);
     void placeCrystal(const PlacePosition& pos);
     void breakCrystal(Actor* crystal);
-    std::vector<PlacePosition> getplacmenet(const std::vector<Actor*>& runtimeActors);
+    std::vector<PlacePosition> getplacmenet(const std::vector<Actor*>& runtimeActors, bool isfakeplayer);
     std::vector<PlacePosition> mPossiblePlacements;
     uint64_t mLastPlace = 0;
     uint64_t mLastsearchPlace = 0;

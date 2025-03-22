@@ -11,6 +11,7 @@
 #include <SDK/Minecraft/ClientInstance.hpp>
 #include <Features/GUI/ModernDropdown.hpp>
 
+
 std::unique_ptr<Detour> KeyHook::mDetour = nullptr;
 
 ImGuiKey ImGui_ImplWin32_VirtualKeyToImGuiKey(WPARAM wParam)
@@ -127,7 +128,21 @@ ImGuiKey ImGui_ImplWin32_VirtualKeyToImGuiKey(WPARAM wParam)
 void KeyHook::onKey(uint32_t key, bool isDown)
 {
     auto oFunc = mDetour->getOriginal<&onKey>();
-    if(Keyboard::WantedTosimulate) return  oFunc(Keyboard::KeyToSimulate, Keyboard::Isdown);
+
+    // Handle F8 key press to cancel simulation
+    if (key == VK_F8 && isDown && Keyboard::mWantedTosimulate) {
+        Keyboard::CancelSimulation();
+        ClientInstance::get()->playUi("random.break", 0.75f, 1.0f);
+        return;
+    }
+
+    // Handle simulation state
+    if (Keyboard::mWantedTosimulate) {
+        if (Keyboard::IsSimulatingKey(key)) {
+            return oFunc(Keyboard::mKeyToSimulate, Keyboard::mIsdown);
+        }
+        return;
+    }
     if (key == VK_F12 && isDown &&
         ClientInstance::get()->getScreenName() != "chat_screen" &&
         !ImGui::GetIO().WantCaptureKeyboard && !ImGui::GetIO().WantTextInput)

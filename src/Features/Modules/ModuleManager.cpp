@@ -55,6 +55,7 @@
 #include "Misc/BlockSearch.hpp"
 
 #include "Movement/AirJump.hpp"
+#include "Movement/AutoMove.hpp"
 #include "Movement/AirSpeed.hpp"
 #include "Movement/AntiImmobile.hpp"
 #include "Movement/AutoPath.hpp"
@@ -168,6 +169,7 @@ void ModuleManager::init()
 
     // Movement
     mModules.emplace_back(std::make_shared<Fly>());
+    mModules.emplace_back(std::make_shared<AutoMove>());
     mModules.emplace_back(std::make_shared<Birdi>());
     mModules.emplace_back(std::make_shared<Velocity>());
     mModules.emplace_back(std::make_shared<NoSlowDown>());

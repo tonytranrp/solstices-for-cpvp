@@ -279,7 +279,7 @@ std::vector<int> BlockESP::getEnabledBlocks()
 
     if (mPortal.mValue)
     {
-        enabledBlocks.push_back(OBSIDIAN);
+        //enabledBlocks.push_back(OBSIDIAN);
         enabledBlocks.push_back(PORTAL);
     }
 

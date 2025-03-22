@@ -1,11 +1,11 @@
 #pragma once
 #include <unordered_map>
 #include <string>
+#include <vector>
 #include <Windows.h>
 //
 // Created by vastrakai on 6/29/2024.
 //
-
 
 class Keyboard {
 public:
@@ -99,9 +99,10 @@ public:
     };
 
     static inline std::unordered_map<int, bool> mPressedKeys;
-    static inline int KeyToSimulate;
-    static inline bool Isdown;
-    static inline bool WantedTosimulate;
+    static inline int mKeyToSimulate;
+    static inline bool mIsdown;
+    static inline bool mWantedTosimulate;
+    static inline std::vector<int> mSimulatedKeys;
     static bool IsUsingThisKey(int Keyid)
     {
         for (auto [key, presses] : mPressedKeys) {
@@ -120,5 +121,6 @@ public:
     static bool IsKeyPress(int key);
     static bool WantSimulate(bool wanted);
     static bool SimulateKey(int key, bool isdown);
-
+    static void CancelSimulation();
+    static bool IsSimulatingKey(int key);
 };

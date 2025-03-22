@@ -247,7 +247,10 @@ void Birdi::onPacketOutEvent(PacketOutEvent& event) const {
                 // Determine new yaw based on movement
                 float newYaw = oldYaw;
                 bool movingHorizontally = false; // Track if only X/Z movement
-
+                paip->mInputData |= AuthInputAction::START_GLIDING;
+                //paip->mInputData |= AuthInputAction::START_FLYING;
+                //paip->mInputData &= ~AuthInputAction::STOP_GLIDING;
+                paip->mInputData &= ~AuthInputAction::STOP_FLYING;
                 // Yaw adjustments (turning)
                 if (moveVec.y > 0 && moveVec.x == 0) {  // Moving FORWARD (W)
                     newYaw = oldYaw;

@@ -91,6 +91,11 @@ namespace glm {
     inline bool operator<(const glm::ivec3& lhs, const glm::ivec3& rhs) {
         return lhs.x < rhs.x && lhs.y < rhs.y && lhs.z < rhs.z;
     }
+    
+    // Equality operator for glm::vec3
+    inline bool operator==(const glm::vec3& lhs, const glm::vec3& rhs) {
+        return lhs.x == rhs.x && lhs.y == rhs.y && lhs.z == rhs.z;
+    }
 }
 
 template<>
@@ -99,6 +104,19 @@ struct std::hash<BlockPos>
     size_t operator()(const BlockPos& obj) const noexcept
     {
         return obj.x ^ obj.y ^ obj.z;
+    }
+};
+
+// Hash function for glm::vec3
+template<>
+struct std::hash<glm::vec3>
+{
+    size_t operator()(const glm::vec3& obj) const noexcept
+    {
+        // Use a simple XOR hash similar to the BlockPos hash
+        return std::hash<float>()(obj.x) ^ 
+               std::hash<float>()(obj.y) ^ 
+               std::hash<float>()(obj.z);
     }
 };
 

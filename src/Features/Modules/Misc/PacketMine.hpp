@@ -17,6 +17,8 @@
 #include <SDK/Minecraft/Network/Packets/PlayerAuthInputPacket.hpp>
 #include <SDK/Minecraft/Network/MinecraftPackets.hpp>
 #include <SDK/Minecraft/Network/Packets/PlayerActionPacket.hpp>
+#include <Utils/GameUtils/MiningState.hpp>
+#include <Utils/GameUtils/QueueManager.hpp>
 
 class PacketMine : public ModuleBase<PacketMine> {
 public:
@@ -26,13 +28,20 @@ public:
         Normal
     };
 
-    // New state enum for intercepting the mining process.
-    enum class MiningState {
-        Idle,      // Not mining
-        Waiting,   // Waiting (e.g. waiting for delay or progress accumulation)
-        Rotating,  // In the process of rotating toward the target
-        Breaking   // Actively breaking the block
-    };
+    // Use the MiningState enum from MiningState.hpp
+    using MiningState = MiningStates::PacketMineState;
+    
+    // Get current mining state from QueueManager
+    MiningState getMiningState() {
+        return QueueManager::convertToPacketMineState(
+            QueueManager::get()->getState<QueueState::Mining>(this, QueueState::Mining::Idle));
+    }
+    
+    // Set mining state in QueueManager
+    void setMiningState(MiningState state) {
+        QueueManager::get()->setState<QueueState::Mining>(this, 
+            QueueManager::convertPacketMineState(state));
+    }
 
     // Settings
     NumberSetting mRange = NumberSetting("Range", "Maximum mining range", 5.0f, 1.0f, 10.0f, 0.1f);
@@ -97,7 +106,9 @@ public:
         mIsMining = false;
         mShouldSpoofSlot = true;
         mToolSlot = -1;
-        mMiningState = MiningState::Idle;
+        
+        // Update state using QueueManager
+        QueueManager::get()->setState<QueueState::Mining>(this, QueueState::Mining::Idle);
         mWaitUntil = 0.0;
     }
 
@@ -127,7 +138,10 @@ public:
         mTargetPos = pos;
         mTargetFace = face;
         mIsMining = true;
-        mMiningState = MiningState::Waiting;
+        
+        // Update state using QueueManager
+        QueueManager::get()->setState<QueueState::Mining>(this, QueueState::Mining::Waiting);
+        
         ChatUtils::displayClientMessage("PacketMine: Target set at (" + std::to_string(pos.x) + ", " + std::to_string(pos.y) + ", " + std::to_string(pos.z) + ")");
 
         // Get best tool for the block
@@ -151,7 +165,7 @@ public:
 
     // Utility: Check if PacketMine is actively mining (not idle).
     bool isMiningActive() const {
-        return mMiningState != MiningState::Idle;
+        return QueueManager::get()->getState<QueueState::Mining>(this, QueueState::Mining::Idle) != QueueState::Mining::Idle;
     }
     void breakBlockTransac(const glm::ivec3& blockPos, int side) {
         auto* player = ClientInstance::get()->getLocalPlayer();
@@ -185,7 +199,8 @@ public:
     void onBaseTickEvent(BaseTickEvent& event) {
         auto* player = event.mActor;
         if (!player || !mIsMining) {
-            mMiningState = MiningState::Idle;
+            // Update state using our helper method
+            setMiningState(MiningState::Idle);
             return;
         }
 
@@ -193,14 +208,16 @@ public:
         int eatprog = player->getItemUseDuration();
         // If the player is eating (duration > 0), pause break progress.
         if (eatprog > 0) {
-            mMiningState = MiningState::Waiting;
+            // Update state using our helper method
+            setMiningState(MiningState::Waiting);
             ChatUtils::displayClientMessage("PacketMine: Paused due to eating (" + std::to_string(eatprog) + ")");
             return;
         }
 
         // If waiting for delay, do not proceed.
         if (NOW < mWaitUntil) {
-            mMiningState = MiningState::Waiting;
+            // Update state using our helper method
+            setMiningState(MiningState::Waiting);
             return;
         }
 
@@ -210,7 +227,6 @@ public:
                 std::to_string(mTargetPos.x) + ", " + std::to_string(mTargetPos.y) + ", " +
                 std::to_string(mTargetPos.z) + ") is not minable.");
             resetMining();
-            mMiningState = MiningState::Idle;
             return;
         }
 
@@ -218,19 +234,20 @@ public:
         if (!block) {
             ChatUtils::displayClientMessage("PacketMine: Block not found at target pos.");
             resetMining();
-            mMiningState = MiningState::Idle;
             return;
         }
 
         auto* gm = player->getGameMode();
         if (!gm) {
-            mMiningState = MiningState::Idle;
+            // Update state using our helper method
+            setMiningState(MiningState::Idle);
             return;
         }
 
         // While progress is below threshold, remain in Waiting state.
         if (gm->mBreakProgress < 1.0f) {
-            mMiningState = MiningState::Waiting;
+            // Update state using our helper method
+            setMiningState(MiningState::Waiting);
             float rate = 0.0f;
             if (mSwitchMode.mValue == SwitchMode::Silent) {
                 rate = ItemUtils::getDestroySpeed(mToolSlot, block);
@@ -245,7 +262,8 @@ public:
 
         // When break progress is near completion, update state to Breaking.
         if (gm->mBreakProgress >= 0.96f) {
-            mMiningState = MiningState::Breaking;
+            // Update state using our helper method
+            setMiningState(MiningState::Breaking);
         }
         if (gm->mBreakProgress >= 1.0f) {
             ChatUtils::displayClientMessage("PacketMine: Breaking block at (" +
@@ -269,11 +287,11 @@ public:
 
             if (mContinue.mValue) {
                 gm->mBreakProgress = mContinueSpeed.mValue;
-                mMiningState = MiningState::Waiting;
+                // Update state using QueueManager
+                QueueManager::get()->setState<QueueState::Mining>(this, QueueState::Mining::Waiting);
             }
             else {
                 resetMining();
-                mMiningState = MiningState::Idle;
             }
         }
 
@@ -281,7 +299,11 @@ public:
         // Debug output throttled to once per second.
         static double lastDebugTime = 0.0;
         if (NOW - lastDebugTime > 1.0) {
-            ChatUtils::displayClientMessage("PacketMine Debug: State=" + miningStateToString(mMiningState));
+            // Get state from QueueManager for debugging
+            auto queueState = QueueManager::get()->getState<QueueState::Mining>(this);
+            auto currentState = getMiningState();
+            ChatUtils::displayClientMessage("PacketMine Debug: State=" + miningStateToString(currentState) + 
+                                          ", QueueState=" + std::to_string(static_cast<int>(queueState)));
             lastDebugTime = NOW;
         }
     }
@@ -292,9 +314,11 @@ public:
         if (!mIsMining) return;
 
         if (event.mPacket->getId() == PacketID::PlayerAuthInput) {
-
+            // Get current state from QueueManager
+            auto currentState = QueueManager::get()->getState<QueueState::Mining>(this);
+            
             // Only send rotation packets if we're in the Breaking state.
-            if (mMiningState == MiningState::Breaking) {
+            if (currentState == QueueState::Mining::Breaking) {
                 auto player = ClientInstance::get()->getLocalPlayer();
                 if (!player) return;
 
@@ -357,5 +381,4 @@ private:
         }
     }
 public:
-        MiningState mMiningState = MiningState::Idle;
 };

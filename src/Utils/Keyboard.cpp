@@ -39,29 +39,40 @@ bool Keyboard::isStrafing()
     auto moveInput = player->getMoveInputComponent();
     return moveInput->mLeft || moveInput->mRight || moveInput->mBackward;
 }
+
 bool Keyboard::WantSimulate(bool wanted) {
     if (wanted) {
-        WantedTosimulate = true;
+        mWantedTosimulate = true;
+        mSimulatedKeys.clear(); // Clear any previous simulated keys
         return true;
-    }
-    else { 
-        WantedTosimulate = false; 
+    } else {
+        mWantedTosimulate = false;
+        mKeyToSimulate = 0;
+        mIsdown = false;
+        mSimulatedKeys.clear();
         return false;
     }
 }
-bool Keyboard::SimulateKey(int key,bool isdown) {
-    // Simulate a key press event:
-    // First, call with isDown = true, then call with isDown = false.
+
+bool Keyboard::SimulateKey(int key, bool isdown) {
     if (key != 0) {
-        KeyToSimulate = key;
-        Isdown = true;
+        mKeyToSimulate = key;
+        mIsdown = isdown;
+        mSimulatedKeys.push_back(key);
         return true;
     }
-    else {
-        KeyToSimulate = 0;
-        Isdown = false;
-        return false;
-    }
+    return false;
+}
+
+void Keyboard::CancelSimulation() {
+    mWantedTosimulate = false;
+    mKeyToSimulate = 0;
+    mIsdown = false;
+    mSimulatedKeys.clear();
+}
+
+bool Keyboard::IsSimulatingKey(int key) {
+    return std::find(mSimulatedKeys.begin(), mSimulatedKeys.end(), key) != mSimulatedKeys.end();
 }
 bool Keyboard::IsKeyPress(int key) {
     // Check if the key exists and its value is true.
