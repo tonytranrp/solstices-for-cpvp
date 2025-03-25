@@ -15,6 +15,7 @@
 #include "Combat/AutoCrystal.hpp"
 #include "Combat/TriggerBot.hpp"
 #include "Combat/AutoCrystalRecode.hpp"
+#include "Combat/crystalplacement.hpp"
 #include "Combat/Surround.hpp"
 
 #include "Misc/AntiBot.hpp"
@@ -157,6 +158,7 @@ void ModuleManager::init()
     // Combat
     mModules.emplace_back(std::make_shared<Aura>());
     mModules.emplace_back(std::make_shared<AutoCrystalRecode>());
+   // mModules.emplace_back(std::make_shared<CrystalPlacement>());
     mModules.emplace_back(std::make_shared<AutoAnchor>());
     mModules.emplace_back(std::make_shared<AutoCrystal>());
     mModules.emplace_back(std::make_shared<TriggerBot>());
