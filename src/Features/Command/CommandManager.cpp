@@ -30,6 +30,7 @@
 #include "Commands/SnipeCommand.hpp"
 #include "Commands/NameProtectCommand.hpp"
 #include "Commands/TeleportCommand.hpp"
+#include "Commands/AutoMoveCommand.hpp"
 #include "Features/Events/ChatEvent.hpp"
 #include "spdlog/spdlog.h"
 
@@ -58,6 +59,7 @@ void CommandManager::init()
     ADD_COMMAND(SnipeCommand);
     ADD_COMMAND(NameProtectCommand);
     ADD_COMMAND(TeleportCommand);
+    ADD_COMMAND(AutoMoveCommand);
 
     ADD_COMMAND(LuaCommand);
 

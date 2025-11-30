@@ -14,21 +14,280 @@
 #include <SDK/Minecraft/World/Chunk/LevelChunk.hpp>
 #include <SDK/Minecraft/World/Chunk/SubChunkBlockStorage.hpp>
 #include <Utils/MiscUtils/BlockUtils.hpp>
-#include <queue>
-#include <unordered_set>
+#include <Utils/MiscUtils/MathUtils.hpp>
+#include <Utils/MiscUtils/RenderUtils.hpp>
+#include <Utils/Utils.hpp>
+#include <algorithm>
 
 static std::mutex pathMutex = {};
-std::unordered_map<BlockPos, AutoMove::FoundBlock> AutoMove::mFoundBlocks = {};
-struct PairComparator {
-    bool operator()(const std::pair<float, ChunkPos>& a, const std::pair<float, ChunkPos>& b) const {
-        return a.first > b.first; // Compare based on the float value (distance)
+
+// A* pathfinding for blocks
+bool AutoMove::calculateBlockPath(const BlockPos& start, const BlockPos& target) {
+    mBlockPath.clear();
+    mCurrentBlockPathIndex = 0;
+    mBlockPathCalculated = false;
+
+    if (start == target) {
+        mBlockPath.push_back(start);
+        mBlockPathCalculated = true;
+        return true;
     }
-};
 
-// Maximum search distance for pathfinding
-const float MAX_SEARCH_DISTANCE = 1000.0f;
+    std::priority_queue<BlockNode*, std::vector<BlockNode*>, BlockNodeCompare> openSet;
+    std::unordered_map<BlockPos, BlockNode*, BlockPosHash> openMap;
+    std::unordered_set<BlockPos, BlockPosHash> closedSet;
+    std::vector<BlockNode*> allNodes;
 
-void AutoMove::moveToNext() {
+    BlockNode* startNode = new BlockNode{
+        start,
+        0.0f,
+        calculateBlockHeuristic(start, target),
+        nullptr,
+        true
+    };
+
+    openSet.push(startNode);
+    openMap[start] = startNode;
+    allNodes.push_back(startNode);
+
+    int iterations = 0;
+    const int MAX_ITERATIONS = 1000;
+
+    while (!openSet.empty() && iterations < MAX_ITERATIONS) {
+        iterations++;
+
+        BlockNode* currentNode = openSet.top();
+        openSet.pop();
+        openMap.erase(currentNode->pos);
+
+        if (currentNode->pos == target) {
+            // Reconstruct path
+            std::vector<BlockPos> path;
+            BlockNode* current = currentNode;
+            while (current != nullptr) {
+                path.push_back(current->pos);
+                current = current->parent;
+            }
+            std::reverse(path.begin(), path.end());
+            mBlockPath = path;
+
+            // Clean up memory
+            for (BlockNode* node : allNodes) {
+                delete node;
+            }
+
+            mBlockPathCalculated = true;
+            return true;
+        }
+
+        closedSet.insert(currentNode->pos);
+
+        // Check neighbors
+        for (const auto& neighborPos : getNeighborBlocks(currentNode->pos)) {
+            if (closedSet.find(neighborPos) != closedSet.end()) {
+                continue;
+            }
+
+            // Check if block is walkable
+            auto blockSource = ClientInstance::get()->getBlockSource();
+            if (!blockSource) continue;
+
+            const Block* block = blockSource->getBlock(neighborPos);
+            if (!isWalkableBlock(block)) continue;
+
+            // Line of sight check if enabled
+            if (mUseLineOfSight.mValue && !hasLineOfSight(currentNode->pos, neighborPos)) {
+                continue;
+            }
+
+            // Calculate movement cost
+            float movementCost = calculateBlockHeuristic(currentNode->pos, neighborPos);
+            float newGCost = currentNode->gCost + movementCost;
+            float hCost = calculateBlockHeuristic(neighborPos, target);
+
+            auto neighborIt = openMap.find(neighborPos);
+            bool inOpenSet = neighborIt != openMap.end();
+
+            if (!inOpenSet || newGCost < neighborIt->second->gCost) {
+                BlockNode* neighborNode = nullptr;
+                
+                if (!inOpenSet) {
+                    neighborNode = new BlockNode{
+                        neighborPos,
+                        newGCost,
+                        hCost,
+                        currentNode,
+                        true
+                    };
+                    openSet.push(neighborNode);
+                    openMap[neighborPos] = neighborNode;
+                    allNodes.push_back(neighborNode);
+                } else {
+                    neighborNode = neighborIt->second;
+                    neighborNode->gCost = newGCost;
+                    neighborNode->hCost = hCost;
+                    neighborNode->parent = currentNode;
+                    openSet.push(neighborNode);
+                }
+            }
+        }
+    }
+
+    // Clean up memory if no path found
+    for (BlockNode* node : allNodes) {
+        delete node;
+    }
+
+    return false;
+}
+
+// A* pathfinding for chunks
+bool AutoMove::calculateChunkPath(const ChunkPos& start, const ChunkPos& target) {
+    mChunkPath.clear();
+    mCurrentChunkPathIndex = 0;
+    mChunkPathCalculated = false;
+
+    if (start == target) {
+        mChunkPath.push_back(start);
+        mChunkPathCalculated = true;
+        return true;
+    }
+
+    std::priority_queue<ChunkNode*, std::vector<ChunkNode*>, ChunkNodeCompare> openSet;
+    std::unordered_map<ChunkPos, ChunkNode*, ChunkPosHash> openMap;
+    std::unordered_set<ChunkPos, ChunkPosHash> closedSet;
+    std::vector<ChunkNode*> allNodes;
+
+    ChunkNode* startNode = new ChunkNode{
+        start,
+        0.0f,
+        calculateChunkHeuristic(start, target),
+        nullptr,
+        true
+    };
+
+    openSet.push(startNode);
+    openMap[start] = startNode;
+    allNodes.push_back(startNode);
+
+    int iterations = 0;
+    const int MAX_ITERATIONS = 500;
+
+    while (!openSet.empty() && iterations < MAX_ITERATIONS) {
+        iterations++;
+
+        ChunkNode* currentNode = openSet.top();
+        openSet.pop();
+        openMap.erase(currentNode->pos);
+
+        if (currentNode->pos == target) {
+            // Reconstruct path
+            std::vector<ChunkPos> path;
+            ChunkNode* current = currentNode;
+            while (current != nullptr) {
+                path.push_back(current->pos);
+                current = current->parent;
+            }
+            std::reverse(path.begin(), path.end());
+            mChunkPath = path;
+
+            // Clean up memory
+            for (ChunkNode* node : allNodes) {
+                delete node;
+            }
+
+            mChunkPathCalculated = true;
+            return true;
+        }
+
+        closedSet.insert(currentNode->pos);
+
+        // Check neighbors
+        for (const auto& neighborPos : getNeighborChunks(currentNode->pos)) {
+            if (closedSet.find(neighborPos) != closedSet.end()) {
+                continue;
+            }
+
+            // Calculate movement cost
+            float movementCost = 1.0f;
+            if (neighborPos.x != currentNode->pos.x && neighborPos.y != currentNode->pos.y) {
+                movementCost = 1.414f; // Diagonal movement
+            }
+
+            float newGCost = currentNode->gCost + movementCost;
+            float hCost = calculateChunkHeuristic(neighborPos, target);
+
+            auto neighborIt = openMap.find(neighborPos);
+            bool inOpenSet = neighborIt != openMap.end();
+
+            if (!inOpenSet || newGCost < neighborIt->second->gCost) {
+                ChunkNode* neighborNode = nullptr;
+                
+                if (!inOpenSet) {
+                    neighborNode = new ChunkNode{
+                        neighborPos,
+                        newGCost,
+                        hCost,
+                        currentNode,
+                        true
+                    };
+                    openSet.push(neighborNode);
+                    openMap[neighborPos] = neighborNode;
+                    allNodes.push_back(neighborNode);
+                } else {
+                    neighborNode = neighborIt->second;
+                    neighborNode->gCost = newGCost;
+                    neighborNode->hCost = hCost;
+                    neighborNode->parent = currentNode;
+                    openSet.push(neighborNode);
+                }
+            }
+        }
+    }
+
+    // Clean up memory if no path found
+    for (ChunkNode* node : allNodes) {
+        delete node;
+    }
+
+    return false;
+}
+
+void AutoMove::updateSearch() {
+    if (!mSearchActive) return;
+
+    auto* player = ClientInstance::get()->getLocalPlayer();
+    if (!player) return;
+
+    auto* blockSource = ClientInstance::get()->getBlockSource();
+    if (!blockSource) return;
+
+    // Update search position automatically
+    static uint64_t lastChunkUpdate = 0;
+    uint64_t now = NOW;
+    uint64_t chunkUpdateInterval = 100; // Update every 100ms
+
+    if (now - lastChunkUpdate > chunkUpdateInterval) {
+        lastChunkUpdate = now;
+        moveToNextChunk();
+    }
+
+    // Process current chunk
+    size_t numSubchunks = (blockSource->getBuildHeight() - blockSource->getBuildDepth()) / 16;
+    for (int i = 0; i < mChunkUpdatesPerTick.mValue; i++) {
+        bool processed = false;
+        tryProcessSub(processed, mCurrentChunkPos, mSubChunkIndex);
+        
+        if (mSubChunkIndex < numSubchunks - 1) {
+            mSubChunkIndex++;
+        } else {
+            mSubChunkIndex = 0;
+            moveToNextChunk();
+        }
+    }
+}
+
+void AutoMove::moveToNextChunk() {
     if (!ClientInstance::get()->getLevelRenderer()) {
         reset();
         return;
@@ -37,88 +296,38 @@ void AutoMove::moveToNext() {
     auto* player = ClientInstance::get()->getLocalPlayer();
     if (!player) return;
 
-    auto* blockSource = ClientInstance::get()->getBlockSource();
-    size_t numSubchunks = (blockSource->getBuildHeight() - blockSource->getBuildDepth()) / 16;
-
-    if (mSubChunkIndex < numSubchunks - 1) {
-        ++mSubChunkIndex;
-        return;
-    }
-    
-    // A* based chunk selection instead of spiral pattern
-    // Use a priority queue to select chunks based on distance to target
-    static std::priority_queue<std::pair<float, ChunkPos>,
-        std::vector<std::pair<float, ChunkPos>>,
-        PairComparator> chunkQueue;
-    static std::unordered_set<ChunkPos> visitedChunks;
-    
-    // If queue is empty, initialize with current chunk
-    if (chunkQueue.empty()) {
-        // Clear visited chunks when starting a new search
-        visitedChunks.clear();
-        visitedChunks.insert(mCurrentChunkPos);
+    // Follow chunk path if available
+    if (mChunkPathCalculated && mCurrentChunkPathIndex < mChunkPath.size()) {
+        mCurrentChunkPos = mChunkPath[mCurrentChunkPathIndex];
+        mCurrentChunkPathIndex++;
         
-        // Add neighbors of current chunk to queue
-        static const std::array<std::pair<int, int>, 8> directions = { {
-            { 1, 0 }, { 0, 1 }, { -1, 0 }, { 0, -1 },
-            { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } // Include diagonals
-        } };
-        
-        for (const auto& [dx, dy] : directions) {
-            ChunkPos neighbor = mCurrentChunkPos;
-            neighbor.x += dx;
-            neighbor.y += dy;
+        // If we've reached the end of the path, recalculate
+        if (mCurrentChunkPathIndex >= mChunkPath.size()) {
+            ChunkPos playerChunk = ChunkPos(*player->getPos());
+            ChunkPos targetChunk = ChunkPos(mTargetX.mValue, mTargetZ.mValue);
             
-            // Calculate priority based on distance to target
-            glm::vec2 chunkCenter(neighbor.x * 16 + 8, neighbor.y * 16 + 8);
-            glm::vec2 targetPos(mTargetPosition.x, mTargetPosition.z);
-            float distance = glm::distance(chunkCenter, targetPos);
-            
-            // Add to queue if not visited
-            if (visitedChunks.find(neighbor) == visitedChunks.end() && 
-                glm::distance(glm::vec2(neighbor), glm::vec2(mSearchCenter)) <= mChunkRadius.mValue) {
-                chunkQueue.push({distance, neighbor});
-            }
-        }
-    }
-    
-    // Get next chunk from queue
-    if (!chunkQueue.empty()) {
-        auto [priority, nextChunk] = chunkQueue.top();
-        chunkQueue.pop();
-        
-        // Set as current chunk
-        mCurrentChunkPos = nextChunk;
-        visitedChunks.insert(nextChunk);
-        
-        // Add neighbors to queue
-        static const std::array<std::pair<int, int>, 8> directions = { {
-            { 1, 0 }, { 0, 1 }, { -1, 0 }, { 0, -1 },
-            { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 } // Include diagonals
-        } };
-        
-        for (const auto& [dx, dy] : directions) {
-            ChunkPos neighbor = nextChunk;
-            neighbor.x += dx;
-            neighbor.y += dy;
-            
-            // Calculate priority based on distance to target
-            glm::vec2 chunkCenter(neighbor.x * 16 + 8, neighbor.y * 16 + 8);
-            glm::vec2 targetPos(mTargetPosition.x, mTargetPosition.z);
-            float distance = glm::distance(chunkCenter, targetPos);
-            
-            // Add to queue if not visited
-            if (visitedChunks.find(neighbor) == visitedChunks.end() && 
-                glm::distance(glm::vec2(neighbor), glm::vec2(mSearchCenter)) <= mChunkRadius.mValue) {
-                chunkQueue.push({distance, neighbor});
+            if (playerChunk != targetChunk) {
+                calculateChunkPath(playerChunk, targetChunk);
             }
         }
     } else {
-        // If queue is empty, reset to search center
-        mCurrentChunkPos = mSearchCenter;
+        // No path available, move directly toward target
+        ChunkPos playerChunk = ChunkPos(*player->getPos());
+        ChunkPos targetChunk = ChunkPos(mTargetX.mValue, mTargetZ.mValue);
+        
+        if (playerChunk != targetChunk) {
+            if (!calculateChunkPath(playerChunk, targetChunk)) {
+                // Fallback: move one step toward target
+                int dx = targetChunk.x - playerChunk.x;
+                int dy = targetChunk.y - playerChunk.y;
+                
+                if (dx != 0) dx = dx > 0 ? 1 : -1;
+                if (dy != 0) dy = dy > 0 ? 1 : -1;
+                
+                mCurrentChunkPos = ChunkPos(playerChunk.x + dx, playerChunk.y + dy);
+            }
+        }
     }
-    
-    mSubChunkIndex = 0;
 }
 
 void AutoMove::tryProcessSub(bool& processed, ChunkPos currentChunkPos, int subChunkIndex) {
@@ -158,34 +367,18 @@ bool AutoMove::processSub(ChunkPos processChunk, int index) {
     const int subChunkBaseY = subChunk.subchunkIndex * 16;
     const int heightLimit = (blockSource->getBuildHeight() - blockSource->getBuildDepth()) / chunk->getSubChunks()->size();
 
-    std::vector<BlockPos> blocksToErase;
+    // Reset counter for current chunk
+    mWalkableBlocksInCurrentChunk = 0;
 
+    // Process blocks and add to walkable set
     BlockUtils::iterateSubChunkElements(blockReader, chunkBaseX, subChunkBaseY, chunkBaseZ, heightLimit,
         [&](const Block* found, const BlockPos& pos) {
-            auto it = mFoundBlocks.find(pos);
-
-            if (!found || found->mLegacy->getBlockId() == 0) {
-                if (it != mFoundBlocks.end()) blocksToErase.push_back(pos);
-                return;
-            }
-
-            // Check if this is a walkable block (solid block with air above)
-            if (isWalkableBlock(found)) {
-                int exposedHeight = BlockUtils::getExposedHeight(pos);
-                if (exposedHeight >= 2) { // Need at least 2 blocks of air above for player to walk
-                    if (it == mFoundBlocks.end()) {
-                        mFoundBlocks.emplace(pos, FoundBlock{ found, AABB(pos, glm::vec3(1.f, 1.f, 1.f)), WALKABLE_COLOR });
-                    }
-                }
-            } else if (it != mFoundBlocks.end()) {
-                blocksToErase.push_back(pos);
+            if (found && found->mLegacy->getBlockId() != 0 && isWalkableBlock(found)) {
+                mWalkableBlocks.insert(pos);
+                mWalkableBlocksInCurrentChunk++;
             }
         }
     );
-
-    for (const auto& pos : blocksToErase) {
-        mFoundBlocks.erase(pos);
-    }
 
     return true;
 }
@@ -196,158 +389,48 @@ void AutoMove::reset() {
     ClientInstance* ci = ClientInstance::get();
     Actor* player = ci->getLocalPlayer();
     mSearchStart = NOW;
-    mFoundBlocks.clear();
-    mStepsCount = 0;
-    mSteps = 1;
-    mDirectionIndex = 0;
+    mLastSearchUpdate = 0;
     mSubChunkIndex = 0;
-    mPath.clear();
-    mPathFound = false;
+    mWalkableBlocksInCurrentChunk = 0;
+    mSearchActive = false;
     
+    // Clear paths
+    mBlockPath.clear();
+    mCurrentBlockPathIndex = 0;
+    mBlockPathCalculated = false;
+    
+    mChunkPath.clear();
+    mCurrentChunkPathIndex = 0;
+    mChunkPathCalculated = false;
+    
+    // Clear walkable blocks
+    mWalkableBlocks.clear();
+
     if (!player) return;
-    
-    // Set target position from settings
-    mTargetPosition = glm::vec3(mTargetX.mValue, mTargetY.mValue, mTargetZ.mValue);
-    
-    BlockSource* blockSource = ci->getBlockSource();
+
     mSearchCenter = ChunkPos(*player->getPos());
     mCurrentChunkPos = mSearchCenter;
+    mSearchActive = true;
+
+    // Calculate initial paths
+    BlockPos playerPos = *player->getPos();
+    BlockPos targetPos = BlockPos(mTargetX.mValue, mTargetY.mValue, mTargetZ.mValue);
+    ChunkPos targetChunk = ChunkPos(mTargetX.mValue, mTargetZ.mValue);
+    
+    calculateBlockPath(playerPos, targetPos);
+    calculateChunkPath(mSearchCenter, targetChunk);
+}
+
+bool AutoMove::isChunkWalkable(const ChunkPos& chunk) const {
+    return true; // For now, assume all chunks are walkable
 }
 
 void AutoMove::onEnable() {
-    gFeatureManager->mDispatcher->listen<RenderEvent, &AutoMove::onRenderEvent, nes::event_priority::VERY_FIRST>(this);
+    gFeatureManager->mDispatcher->listen<RenderEvent, &AutoMove::onRenderEvent>(this);
     gFeatureManager->mDispatcher->listen<BaseTickEvent, &AutoMove::onBaseTickEvent>(this);
     gFeatureManager->mDispatcher->listen<BlockChangedEvent, &AutoMove::onBlockChangedEvent>(this);
     gFeatureManager->mDispatcher->listen<PacketInEvent, &AutoMove::onPacketInEvent>(this);
     reset();
-    
-    auto* player = ClientInstance::get()->getLocalPlayer();
-    if (!player) return;
-    
-    // Initialize target position from settings
-    mTargetPosition = glm::vec3(mTargetX.mValue, mTargetY.mValue, mTargetZ.mValue);
-    
-    // Initialize search center based on player position
-    glm::vec3 playerPos = *player->getPos();
-    mSearchCenter = ChunkPos(static_cast<int>(playerPos.x) >> 4, static_cast<int>(playerPos.z) >> 4);
-    mCurrentChunkPos = mSearchCenter;
-    
-    // Initialize checkpoint system
-    mCheckpoints.clear();
-    mCurrentCheckpointIndex = 0;
-    mReachedCheckpoint = false;
-    generateCheckpoints(playerPos, mTargetPosition);
-}
-
-void AutoMove::generateCheckpoints(const glm::vec3& start, const glm::vec3& target) {
-    mCheckpoints.clear();
-    mCurrentCheckpointIndex = 0;
-    mReachedCheckpoint = false;
-    
-    // Always add start and target as checkpoints
-    mCheckpoints.push_back(start);
-    
-    // Calculate the total distance
-    float totalDistance = glm::distance(start, target);
-    
-    // If the distance is less than the checkpoint distance, just add the target
-    if (totalDistance <= mCheckpointDistance.mValue) {
-        mCheckpoints.push_back(target);
-        return;
-    }
-    
-    // Calculate how many checkpoints we need
-    int numCheckpoints = static_cast<int>(totalDistance / mCheckpointDistance.mValue);
-    
-    // Create intermediate checkpoints along the straight line from start to target
-    for (int i = 1; i < numCheckpoints; i++) {
-        float t = static_cast<float>(i) / numCheckpoints;
-        glm::vec3 checkpoint = start + t * (target - start);
-        mCheckpoints.push_back(checkpoint);
-    }
-    
-    // Add the target as the final checkpoint
-    mCheckpoints.push_back(target);
-}
-
-void AutoMove::smoothPath() {
-    if (!mSmoothPath.mValue || mPath.size() < 3) return;
-    
-    auto* blockSource = ClientInstance::get()->getBlockSource();
-    if (!blockSource) return;
-    
-    std::vector<glm::vec3> smoothedPath;
-    smoothedPath.push_back(mPath[0]); // Always keep the start point
-    
-    // Use line-of-sight checks to remove unnecessary waypoints
-    size_t i = 0;
-    while (i < mPath.size() - 1) {
-        size_t j = i + 2; // Try to connect to points further ahead
-        size_t furthestVisible = i + 1;
-        
-        // Find the furthest point that has line of sight from current point
-        while (j < mPath.size()) {
-            if (hasLineOfSight(mPath[i], mPath[j])) {
-                furthestVisible = j;
-            }
-            j++;
-        }
-        
-        // Add the furthest visible point to the smoothed path
-        smoothedPath.push_back(mPath[furthestVisible]);
-        i = furthestVisible;
-    }
-    
-    // Replace the original path with the smoothed path
-    mPath = smoothedPath;
-}
-
-bool AutoMove::hasLineOfSight(const glm::vec3& start, const glm::vec3& end) const {
-    auto* blockSource = ClientInstance::get()->getBlockSource();
-    if (!blockSource) return false;
-    
-    // Calculate direction vector
-    glm::vec3 direction = end - start;
-    float distance = glm::length(direction);
-    direction = glm::normalize(direction);
-    
-    // Ray-trace from start to end
-    for (float t = 0.0f; t < distance; t += 0.5f) {
-        glm::vec3 checkPos = start + direction * t;
-        glm::ivec3 blockPos = glm::floor(checkPos);
-        
-        // Check if block is solid
-        Block* block = blockSource->getBlock(blockPos);
-        if (block && block->mLegacy->getBlockId() != 0 && block->mLegacy->mMaterial->mIsBlockingMotion) {
-            return false; // Line of sight blocked
-        }
-    }
-    
-    return true; // Clear line of sight
-}
-
-bool AutoMove::isPathVisible() const {
-    if (mPath.empty()) return false;
-    
-    auto* player = ClientInstance::get()->getLocalPlayer();
-    if (!player) return false;
-    
-    // Get player position
-    glm::vec3 playerPos = *player->getPos();
-    
-    // Check if any part of the path is visible to the player
-    for (const auto& pathPos : mPath) {
-        // Calculate distance to player
-        float distance = glm::distance(playerPos, pathPos);
-        
-        // If within render distance, consider it visible
-        // Using a conservative estimate of render distance
-        if (distance < 100.0f) {
-            return true;
-        }
-    }
-    
-    return false;
 }
 
 void AutoMove::onDisable() {
@@ -355,7 +438,7 @@ void AutoMove::onDisable() {
     gFeatureManager->mDispatcher->deafen<BaseTickEvent, &AutoMove::onBaseTickEvent>(this);
     gFeatureManager->mDispatcher->deafen<BlockChangedEvent, &AutoMove::onBlockChangedEvent>(this);
     gFeatureManager->mDispatcher->deafen<PacketInEvent, &AutoMove::onPacketInEvent>(this);
-    reset();
+    mSearchActive = false;
 }
 
 void AutoMove::onBlockChangedEvent(BlockChangedEvent& event) {
@@ -374,25 +457,9 @@ void AutoMove::onBlockChangedEvent(BlockChangedEvent& event) {
     tryProcessSub(result, chunkPos, subChunk);
 
     if (!result) {
-        spdlog::critical("Failed to process subchunk [scIndex: {}/{}, chunkPos: ({}, {})].", subChunk, 
-            (ClientInstance::get()->getBlockSource()->getBuildHeight() - ClientInstance::get()->getBlockSource()->getBuildDepth()) / 16, 
+        spdlog::critical("Failed to process subchunk [scIndex: {}/{}, chunkPos: ({}, {})].", subChunk,
+            (ClientInstance::get()->getBlockSource()->getBuildHeight() - ClientInstance::get()->getBlockSource()->getBuildDepth()) / 16,
             chunkPos.x, chunkPos.y);
-    }
-
-    // If the block is walkable, add it to our found blocks
-    if (isWalkableBlock(event.mNewBlock)) {
-        int exposedHeight = BlockUtils::getExposedHeight(event.mBlockPos);
-        if (exposedHeight >= 2) {
-            mFoundBlocks[event.mBlockPos] = { event.mNewBlock, AABB(event.mBlockPos, glm::vec3(1.f, 1.f, 1.f)), WALKABLE_COLOR };
-        }
-    } else {
-        mFoundBlocks.erase(event.mBlockPos);
-    }
-    
-    // Recalculate path if a block changed
-    auto player = ClientInstance::get()->getLocalPlayer();
-    if (player) {
-        mPathFound = findPath(*player->getPos(), mTargetPosition);
     }
 }
 
@@ -408,88 +475,38 @@ void AutoMove::onBaseTickEvent(BaseTickEvent& event) {
     uint64_t now = NOW;
 
     if (lastUpdate + freq > now) return;
-
     lastUpdate = now;
+
     auto ci = ClientInstance::get();
     auto player = ci->getLocalPlayer();
     if (!player) return;
-    auto blockSource = ci->getBlockSource();
 
-    if (glm::distance(glm::vec2(mCurrentChunkPos), glm::vec2(mSearchCenter)) > mChunkRadius.mValue) {
+    ChunkPos playerChunk = ChunkPos(*player->getPos());
+    ChunkPos targetChunk = ChunkPos(mTargetX.mValue, mTargetZ.mValue);
+
+    // Check if we need to recalculate paths
+    float distanceFromCenter = std::sqrt(
+        (playerChunk.x - mSearchCenter.x) * (playerChunk.x - mSearchCenter.x) + 
+        (playerChunk.y - mSearchCenter.y) * (playerChunk.y - mSearchCenter.y)
+    );
+
+    if (distanceFromCenter > mChunkRadius.mValue || (!mBlockPathCalculated && !mChunkPathCalculated)) {
         mSearchStart = NOW;
-        mSearchCenter = ChunkPos(*player->getPos());
+        mSearchCenter = playerChunk;
         mCurrentChunkPos = mSearchCenter;
-        mStepsCount = 0;
-        mSteps = 1;
-        mDirectionIndex = 0;
         mSubChunkIndex = 0;
-    }
-
-    for (int i = 0; i < mChunkUpdatesPerTick.mValue; i++) {
-        bool processed = false;
-        tryProcessSub(processed, mCurrentChunkPos, mSubChunkIndex);
-        if (!processed) {
-            spdlog::critical("Failed to process subchunk [scIndex: {}/{}, chunkPos: ({}, {})].", mSubChunkIndex, 
-                (blockSource->getBuildHeight() - blockSource->getBuildDepth()) / 16, 
-                mCurrentChunkPos.x, mCurrentChunkPos.y);
-        }
-        moveToNext();
-    }
-
-    BlockPos playerPos = *player->getPos();
-    glm::vec3 playerPosition = *player->getPos();
-
-    int subChunk = (playerPos.y - ClientInstance::get()->getBlockSource()->getBuildDepth()) >> 4;
-    bool result = false;
-    tryProcessSub(result, ChunkPos(playerPos), subChunk);
-
-    if (!result) {
-        spdlog::critical("Failed to process subchunk [scIndex: {}/{}, chunkPos: ({}, {})].", subChunk, 
-            (blockSource->getBuildHeight() - blockSource->getBuildDepth()) / 16, 
-            playerPos.x, playerPos.z);
-    }
-    
-    // Update target position from settings
-    mTargetPosition = glm::vec3(mTargetX.mValue, mTargetY.mValue, mTargetZ.mValue);
-    
-    // Check if we need to recalculate the path based on checkpoints
-    if (mPathFound && mAutoRecalculate.mValue) {
-        // Check if we've reached the current checkpoint
-        if (mCurrentCheckpointIndex < mCheckpoints.size() - 1) {
-            float distanceToCheckpoint = glm::distance(playerPosition, mCheckpoints[mCurrentCheckpointIndex + 1]);
-            
-            // If we're close enough to the checkpoint, move to the next one
-            if (distanceToCheckpoint < 5.0f) {
-                mCurrentCheckpointIndex++;
-                
-                // If we've reached the final checkpoint, we're done
-                if (mCurrentCheckpointIndex >= mCheckpoints.size() - 1) {
-                    mReachedCheckpoint = true;
-                } else {
-                    // Recalculate path to the next checkpoint
-                    mPath.clear();
-                    mPathFound = findPath(playerPosition, mCheckpoints[mCurrentCheckpointIndex + 1]);
-                }
-            }
-        }
+        mSearchActive = true;
         
-        // Check if the path is no longer visible and needs recalculation
-        if (!isPathVisible() && !mReachedCheckpoint) {
-            // Recalculate checkpoints from current position
-            generateCheckpoints(playerPosition, mTargetPosition);
-            mPath.clear();
-            mPathFound = findPath(playerPosition, mCheckpoints[mCurrentCheckpointIndex + 1]);
-        }
+        // Recalculate paths
+        BlockPos playerPos = *player->getPos();
+        BlockPos targetPos = BlockPos(mTargetX.mValue, mTargetY.mValue, mTargetZ.mValue);
+        
+        calculateBlockPath(playerPos, targetPos);
+        calculateChunkPath(mSearchCenter, targetChunk);
     }
-    
-    // Try to find a path to the target position
-    if (!mPathFound) {
-        // Generate checkpoints first if needed
-        if (mCheckpoints.empty()) {
-            generateCheckpoints(playerPosition, mTargetPosition);
-        }
-        mPathFound = findPath(playerPosition, mCheckpoints[mCurrentCheckpointIndex + 1]);
-    }
+
+    // Update autonomous search
+    updateSearch();
 }
 
 void AutoMove::onPacketInEvent(PacketInEvent& event) {
@@ -499,7 +516,7 @@ void AutoMove::onPacketInEvent(PacketInEvent& event) {
     }
 
     if (event.mPacket->getId() == PacketID::ChangeDimension) {
-        reset(); // Reset the search when changing dimensions
+        reset();
     }
 
     if (event.mPacket->getId() == PacketID::PlayerAction) {
@@ -519,384 +536,143 @@ void AutoMove::onRenderEvent(RenderEvent& event) {
     std::lock_guard<std::mutex> lock(pathMutex);
 
     auto drawList = ImGui::GetBackgroundDrawList();
-
     auto player = ClientInstance::get()->getLocalPlayer();
     if (!player || !ClientInstance::get()->getLevelRenderer()) {
         reset();
         return;
     }
 
-    glm::ivec3 playerPos = *player->getPos();
+    // Render block path
+    if (mRenderPath.mValue && mBlockPathCalculated && !mBlockPath.empty()) {
+        for (size_t i = 0; i < mBlockPath.size(); i++) {
+            const auto& blockPos = mBlockPath[i];
+            glm::vec3 pos = glm::vec3(blockPos);
 
+            AABB blockAABB = AABB(pos, glm::vec3(1.f, 1.f, 1.f));
+            std::vector<ImVec2> blockPoints = MathUtils::getImBoxPoints(blockAABB);
+
+            ImColor pathColor;
+            if (i == 0) {
+                pathColor = ImColor(0.f, 1.f, 0.f, 1.f);  // Start (green)
+            } else if (i == mBlockPath.size() - 1) {
+                pathColor = ImColor(1.f, 0.f, 0.f, 1.f);  // End (red)
+            } else {
+                pathColor = PATH_COLOR;  // Path (yellow)
+            }
+
+            if (mRenderMode.mValue == BlockRenderMode::Both || mRenderMode.mValue == BlockRenderMode::Outline) {
+                drawList->AddPolyline(blockPoints.data(), blockPoints.size(), pathColor, 0, 2.0f);
+            }
+            if (mRenderMode.mValue == BlockRenderMode::Both || mRenderMode.mValue == BlockRenderMode::Filled) {
+                drawList->AddConvexPolyFilled(blockPoints.data(), blockPoints.size(), 
+                    ImColor(pathColor.Value.x, pathColor.Value.y, pathColor.Value.z, 0.3f));
+            }
+        }
+    }
+
+    // Render chunk path
+    if (mRenderPath.mValue && mChunkPathCalculated && !mChunkPath.empty()) {
+        for (size_t i = 0; i < mChunkPath.size(); i++) {
+            const auto& chunkPos = mChunkPath[i];
+            glm::vec3 pos = glm::vec3(chunkPos.x * 16, 0, chunkPos.y * 16);
+
+            AABB chunkAABB = AABB(pos, glm::vec3(16.f, 1.f, 16.f));
+            std::vector<ImVec2> chunkPoints = MathUtils::getImBoxPoints(chunkAABB);
+
+            ImColor pathColor;
+            if (i == 0) {
+                pathColor = ImColor(0.f, 1.f, 0.f, 0.5f);  // Start chunk (green)
+            } else if (i == mChunkPath.size() - 1) {
+                pathColor = ImColor(1.f, 0.f, 0.f, 0.5f);  // End chunk (red)
+            } else if (i == mCurrentChunkPathIndex - 1) {
+                pathColor = ImColor(1.f, 1.f, 0.f, 0.5f);  // Current processing chunk (yellow)
+            } else {
+                pathColor = ImColor(0.f, 0.5f, 1.f, 0.3f);  // Path chunks (blue)
+            }
+
+            if (mRenderMode.mValue == BlockRenderMode::Both || mRenderMode.mValue == BlockRenderMode::Outline) {
+                drawList->AddPolyline(chunkPoints.data(), chunkPoints.size(), pathColor, 0, 1.5f);
+            }
+            if (mRenderMode.mValue == BlockRenderMode::Both || mRenderMode.mValue == BlockRenderMode::Filled) {
+                drawList->AddConvexPolyFilled(chunkPoints.data(), chunkPoints.size(), 
+                    ImColor(pathColor.Value.x, pathColor.Value.y, pathColor.Value.z, 0.1f));
+            }
+        }
+    }
+
+    // Render current chunk being processed
     if (mRenderCurrentChunk.mValue) {
-        ChunkPos currentChunkPos = ChunkPos(mCurrentChunkPos);
-        glm::vec3 pos = glm::vec3(currentChunkPos.x * 16, 0, currentChunkPos.y * 16);
+        glm::vec3 pos = glm::vec3(mCurrentChunkPos.x * 16, 0, mCurrentChunkPos.y * 16);
 
-        // Render the current chunk being processed
         AABB chunkAABB = AABB(pos, glm::vec3(16.f, 1.f, 16.f));
         std::vector<ImVec2> chunkPoints = MathUtils::getImBoxPoints(chunkAABB);
 
-        // Use a distinct color for the current chunk being processed
-        ImColor chunkColor = ImColor(1.f, 0.5f, 0.f, 1.f); // Orange color
+        ImColor chunkColor = ImColor(0.f, 1.f, 0.f, 0.8f); // Green for current chunk
 
         if (mRenderMode.mValue == BlockRenderMode::Both || mRenderMode.mValue == BlockRenderMode::Outline) {
-            drawList->AddPolyline(chunkPoints.data(), chunkPoints.size(), chunkColor, 0, 2.0f);
+            drawList->AddPolyline(chunkPoints.data(), chunkPoints.size(), chunkColor, 0, 3.0f);
         }
         if (mRenderMode.mValue == BlockRenderMode::Both || mRenderMode.mValue == BlockRenderMode::Filled) {
-            drawList->AddConvexPolyFilled(chunkPoints.data(), chunkPoints.size(), ImColor(chunkColor.Value.x, chunkColor.Value.y, chunkColor.Value.z, 0.25f));
+            drawList->AddConvexPolyFilled(chunkPoints.data(), chunkPoints.size(), 
+                ImColor(chunkColor.Value.x, chunkColor.Value.y, chunkColor.Value.z, 0.2f));
         }
     }
 
-    // Render checkpoints if available
-    if (mRenderPath.mValue && !mCheckpoints.empty()) {
-        for (size_t i = 0; i < mCheckpoints.size(); i++) {
-            const auto& checkpointPos = mCheckpoints[i];
-            
-            // Convert world position to screen position
-            ImVec2 screenPos;
-            if (RenderUtils::worldToScreen(checkpointPos, screenPos)) {
-                // Draw checkpoint as a larger marker
-                float checkpointSize = 8.0f;
-                ImColor checkpointColor = (i == mCurrentCheckpointIndex) ? 
-                    ImColor(1.0f, 0.5f, 0.0f, 1.0f) : // Current checkpoint (orange)
-                    ImColor(1.0f, 1.0f, 0.0f, 1.0f);  // Other checkpoints (yellow)
-                
-                drawList->AddCircleFilled(screenPos, checkpointSize, checkpointColor);
-                
-                // Draw lines connecting checkpoints
-                if (i < mCheckpoints.size() - 1) {
-                    const auto& nextCheckpoint = mCheckpoints[i + 1];
-                    ImVec2 screenNext;
-                    if (RenderUtils::worldToScreen(nextCheckpoint, screenNext)) {
-                        drawList->AddLine(screenPos, screenNext, ImColor(1.0f, 1.0f, 0.0f, 0.5f), 1.0f);
-                    }
-                }
-            }
+    // Render walkable blocks
+    for (const auto& blockPos : mWalkableBlocks) {
+        glm::vec3 pos = glm::vec3(blockPos);
+
+        AABB blockAABB = AABB(pos, glm::vec3(1.f, 1.f, 1.f));
+        std::vector<ImVec2> blockPoints = MathUtils::getImBoxPoints(blockAABB);
+
+        if (mRenderMode.mValue == BlockRenderMode::Both || mRenderMode.mValue == BlockRenderMode::Outline) {
+            drawList->AddPolyline(blockPoints.data(), blockPoints.size(), WALKABLE_COLOR, 0, 1.0f);
+        }
+        if (mRenderMode.mValue == BlockRenderMode::Both || mRenderMode.mValue == BlockRenderMode::Filled) {
+            drawList->AddConvexPolyFilled(blockPoints.data(), blockPoints.size(), 
+                ImColor(WALKABLE_COLOR.Value.x, WALKABLE_COLOR.Value.y, WALKABLE_COLOR.Value.z, 0.1f));
         }
     }
 
-    // Only render path blocks if path is found and rendering is enabled
-    if (mPathFound && mRenderPath.mValue && !mPath.empty()) {
-        // Render each node in the path
-        for (size_t i = 0; i < mPath.size(); i++) {
-            const auto& pathPos = mPath[i];
-            AABB pathAABB = AABB(pathPos, glm::vec3(1.f, 1.f, 1.f));
-            std::vector<ImVec2> pathPoints = MathUtils::getImBoxPoints(pathAABB);
+    // Render target position
+    glm::vec3 targetPos(mTargetX.mValue, mTargetY.mValue, mTargetZ.mValue);
+    AABB targetAABB = AABB(targetPos, glm::vec3(1.f, 1.f, 1.f));
+    std::vector<ImVec2> targetPoints = MathUtils::getImBoxPoints(targetAABB);
 
-            if (mRenderMode.mValue == BlockRenderMode::Both || mRenderMode.mValue == BlockRenderMode::Outline) {
-                drawList->AddPolyline(pathPoints.data(), pathPoints.size(), PATH_COLOR, 0, 2.0f);
-            }
-            if (mRenderMode.mValue == BlockRenderMode::Both || mRenderMode.mValue == BlockRenderMode::Filled) {
-                drawList->AddConvexPolyFilled(pathPoints.data(), pathPoints.size(), ImColor(PATH_COLOR.Value.x, PATH_COLOR.Value.y, PATH_COLOR.Value.z, 0.25f));
-            }
+    if (mRenderMode.mValue == BlockRenderMode::Both || mRenderMode.mValue == BlockRenderMode::Outline) {
+        drawList->AddPolyline(targetPoints.data(), targetPoints.size(), TARGET_COLOR, 0, 3.0f);
+    }
+    if (mRenderMode.mValue == BlockRenderMode::Both || mRenderMode.mValue == BlockRenderMode::Filled) {
+        drawList->AddConvexPolyFilled(targetPoints.data(), targetPoints.size(), 
+            ImColor(TARGET_COLOR.Value.x, TARGET_COLOR.Value.y, TARGET_COLOR.Value.z, 0.6f));
+    }
 
-            // Draw lines connecting path nodes
-            if (i < mPath.size() - 1) {
-                const auto& nextPos = mPath[i + 1];
-                glm::vec3 currentCenter = pathPos + glm::vec3(0.5f, 0.5f, 0.5f);
-                glm::vec3 nextCenter = nextPos + glm::vec3(0.5f, 0.5f, 0.5f);
-                
-                ImVec2 screenCurrent, screenNext;
-                if (RenderUtils::worldToScreen(currentCenter, screenCurrent) && RenderUtils::worldToScreen(nextCenter, screenNext)) {
-                    drawList->AddLine(screenCurrent, screenNext, PATH_COLOR, 2.0f);
-                }
-            }
-        }
-    }
-}
-
-bool AutoMove::isWalkableBlock(const Block* block) const {
-    if (!block) return false;
+    // Display info
+    ImVec2 screenPos(50, 80);
+    std::string searchInfo = "Search Active: " + std::string(mSearchActive ? "Yes" : "No");
+    drawList->AddText(screenPos, ImColor(1.f, 1.f, 1.f, 1.f), searchInfo.c_str());
     
-    int blockId = block->mLegacy->getBlockId();
+    screenPos.y += 20;
+    std::string blockPathInfo = "Block Path: " + std::string(mBlockPathCalculated ? "Yes" : "No");
+    drawList->AddText(screenPos, ImColor(1.f, 1.f, 1.f, 1.f), blockPathInfo.c_str());
     
-    // Check if the block is solid and can be walked on
-    // Exclude liquids (IDs 8-11) and air (ID 0)
-    bool isLiquid = (blockId >= 8 && blockId <= 11);
+    screenPos.y += 20;
+    std::string chunkPathInfo = "Chunk Path: " + std::string(mChunkPathCalculated ? "Yes" : "No");
+    drawList->AddText(screenPos, ImColor(1.f, 1.f, 1.f, 1.f), chunkPathInfo.c_str());
     
-    return blockId != 0 && !isLiquid && block->mLegacy->mMaterial->mIsBlockingMotion;
-}
-
-float AutoMove::calculateHeuristic(const glm::vec3& a, const glm::vec3& b) const {
-    // Improved heuristic function using a combination of Manhattan distance and Euclidean distance
-    // This provides better pathfinding for longer distances
-    float dx = std::abs(a.x - b.x);
-    float dy = std::abs(a.y - b.y);
-    float dz = std::abs(a.z - b.z);
+    screenPos.y += 20;
+    std::string blocksInfo = "Walkable Blocks: " + std::to_string(mWalkableBlocks.size());
+    drawList->AddText(screenPos, ImColor(1.f, 1.f, 1.f, 1.f), blocksInfo.c_str());
     
-    // Manhattan distance for horizontal movement
-    float manhattan = dx + dz;
-    
-    // Euclidean distance for overall direction
-    float euclidean = std::sqrt(dx*dx + dy*dy + dz*dz);
-    
-    // Weight vertical movement more to prefer paths that stay at similar heights
-    // Use the configurable vertical penalty to allow users to adjust how much the algorithm avoids vertical movement
-    float verticalPenalty = dy * mVerticalPenalty.mValue;
-    
-    // Combine the heuristics with a weight factor
-    return 0.6f * manhattan + 0.4f * euclidean + verticalPenalty;
-}
-
-std::vector<glm::vec3> AutoMove::getNeighbors(const glm::vec3& position) const {
-    std::vector<glm::vec3> neighbors;
-    auto* blockSource = ClientInstance::get()->getBlockSource();
-    if (!blockSource) return neighbors;
-    
-    // Check horizontal neighbors (same Y level)
-    static const std::vector<glm::vec3> horizontalOffsets = {
-        {1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1},
-        {1, 0, 1}, {1, 0, -1}, {-1, 0, 1}, {-1, 0, -1} // Diagonals
-    };
-    
-    // Check for neighbors at the same level
-    for (const auto& offset : horizontalOffsets) {
-        glm::vec3 neighborPos = position + offset;
-        glm::ivec3 floorPos = glm::floor(neighborPos);
-        
-        // Check if the block below is solid and walkable
-        glm::ivec3 blockBelowPos = floorPos - glm::ivec3(0, 1, 0);
-        Block* blockBelow = blockSource->getBlock(blockBelowPos);
-        
-        // Check if there's enough headroom (2 blocks)
-        if (isWalkableBlock(blockBelow) && 
-            BlockUtils::isAirBlock(floorPos) && 
-            BlockUtils::isAirBlock(floorPos + glm::ivec3(0, 1, 0))) {
-            
-            // Check for collisions with blocks if collision avoidance is enabled
-            if (mAvoidCollisions.mValue) {
-                // Check if there's a clear path from current position to neighbor
-                if (hasLineOfSight(position, neighborPos)) {
-                    neighbors.push_back(floorPos);
-                }
-            } else {
-                neighbors.push_back(floorPos);
-            }
-        }
+    if (mBlockPathCalculated) {
+        screenPos.y += 20;
+        std::string pathLengthInfo = "Block Path Length: " + std::to_string(mBlockPath.size());
+        drawList->AddText(screenPos, ImColor(1.f, 1.f, 1.f, 1.f), pathLengthInfo.c_str());
     }
     
-    // Check for step up (1 block up) - limit vertical movement to reduce excessive up/down
-    for (const auto& offset : horizontalOffsets) {
-        glm::vec3 neighborPos = position + offset + glm::vec3(0, 1, 0);
-        glm::ivec3 floorPos = glm::floor(neighborPos);
-        
-        // Check if the block below is solid and walkable
-        glm::ivec3 blockBelowPos = floorPos - glm::ivec3(0, 1, 0);
-        Block* blockBelow = blockSource->getBlock(blockBelowPos);
-        
-        // Check if there's enough headroom (2 blocks)
-        if (isWalkableBlock(blockBelow) && 
-            BlockUtils::isAirBlock(floorPos) && 
-            BlockUtils::isAirBlock(floorPos + glm::ivec3(0, 1, 0))) {
-            
-            // Check for collisions with blocks if collision avoidance is enabled
-            if (mAvoidCollisions.mValue) {
-                if (hasLineOfSight(position, neighborPos)) {
-                    neighbors.push_back(floorPos);
-                }
-            } else {
-                neighbors.push_back(floorPos);
-            }
-        }
+    if (mChunkPathCalculated) {
+        screenPos.y += 20;
+        std::string chunkPathLengthInfo = "Chunk Path Length: " + std::to_string(mChunkPath.size());
+        drawList->AddText(screenPos, ImColor(1.f, 1.f, 1.f, 1.f), chunkPathLengthInfo.c_str());
     }
-    
-    // Check for step down (1 block down)
-    for (const auto& offset : horizontalOffsets) {
-        glm::vec3 neighborPos = position + offset - glm::vec3(0, 1, 0);
-        glm::ivec3 floorPos = glm::floor(neighborPos);
-        
-        // Check if the block below is solid and walkable
-        glm::ivec3 blockBelowPos = floorPos - glm::ivec3(0, 1, 0);
-        Block* blockBelow = blockSource->getBlock(blockBelowPos);
-        
-        // Check if there's enough headroom (2 blocks)
-        if (isWalkableBlock(blockBelow) && 
-            BlockUtils::isAirBlock(floorPos) && 
-            BlockUtils::isAirBlock(floorPos + glm::ivec3(0, 1, 0))) {
-            
-            // Check for collisions with blocks if collision avoidance is enabled
-            if (mAvoidCollisions.mValue) {
-                if (hasLineOfSight(position, neighborPos)) {
-                    neighbors.push_back(floorPos);
-                }
-            } else {
-                neighbors.push_back(floorPos);
-            }
-        }
-    }
-    
-    return neighbors;
-}
-
-std::vector<glm::vec3> AutoMove::reconstructPath(PathNode* endNode) {
-    std::vector<glm::vec3> path;
-    PathNode* current = endNode;
-    
-    while (current != nullptr) {
-        path.push_back(current->position);
-        current = current->parent;
-    }
-    
-    std::reverse(path.begin(), path.end());
-    return path;
-}
-
-bool AutoMove::findPath(const glm::vec3& start, const glm::vec3& target) {
-    // Generate checkpoints if needed
-    if (mCheckpoints.empty()) {
-        generateCheckpoints(start, target);
-    }
-    
-    // Determine the current target based on checkpoints
-    glm::vec3 currentTarget;
-    if (mCurrentCheckpointIndex < mCheckpoints.size() - 1) {
-        currentTarget = mCheckpoints[mCurrentCheckpointIndex + 1];
-    } else {
-        currentTarget = target;
-    }
-    
-    // Improved A* pathfinding algorithm implementation
-    // Use a priority queue for better performance with large open sets
-    struct NodeCompare {
-        bool operator()(const PathNode* a, const PathNode* b) const {
-            return a->getFCost() > b->getFCost(); // Min-heap
-        }
-    };
-    
-    std::priority_queue<PathNode*, std::vector<PathNode*>, NodeCompare> openSet;
-    std::unordered_map<glm::vec3, PathNode*> openMap; // For quick lookup
-    std::unordered_set<glm::vec3> closedSet;
-    
-    // Create start node
-    PathNode* startNode = new PathNode{
-        glm::floor(start),
-        0.0f,
-        calculateHeuristic(start, currentTarget),
-        nullptr
-    };
-    
-    openSet.push(startNode);
-    openMap[startNode->position] = startNode;
-    
-    // Set a maximum search distance to prevent searching too far
-    float maxSearchDistance = glm::distance(start, currentTarget) * 2.0f;
-    maxSearchDistance = std::max(maxSearchDistance, 100.0f); // At least 100 blocks
-    maxSearchDistance = std::min(maxSearchDistance, MAX_SEARCH_DISTANCE); // Cap at MAX_SEARCH_DISTANCE
-    
-    // Track the closest node to target for partial paths
-    PathNode* closestNode = startNode;
-    float closestDistance = glm::distance(startNode->position, currentTarget);
-    
-    int iterations = 0;
-    const int MAX_ITERATIONS = 5000; // Prevent infinite loops
-    
-    while (!openSet.empty() && iterations < MAX_ITERATIONS) {
-        iterations++;
-        
-        // Get the node with the lowest F cost
-        PathNode* currentNode = openSet.top();
-        openSet.pop();
-        
-        // Remove from open map
-        openMap.erase(currentNode->position);
-        
-        // If we reached the target (or close enough)
-        float distanceToTarget = glm::distance(currentNode->position, currentTarget);
-        if (distanceToTarget < 2.0f) {
-            mPath = reconstructPath(currentNode);
-            
-            // Apply path smoothing if enabled
-            if (mSmoothPath.mValue) {
-                smoothPath();
-            }
-            
-            // Clean up memory
-            for (auto& pair : openMap) {
-                delete pair.second;
-            }
-            
-            // Don't delete currentNode as it's part of the path
-            mPathFound = true;
-            return true;
-        }
-        
-        // Track closest node to target for partial paths
-        if (distanceToTarget < closestDistance) {
-            closestDistance = distanceToTarget;
-            closestNode = currentNode;
-        }
-        
-        // Move current node to closed set
-        closedSet.insert(currentNode->position);
-        
-        // Check all neighbors
-        for (const auto& neighborPos : getNeighbors(currentNode->position)) {
-            // Skip if already evaluated or too far from start
-            if (closedSet.find(neighborPos) != closedSet.end() ||
-                glm::distance(start, neighborPos) > maxSearchDistance) {
-                continue;
-            }
-            
-            // Calculate new path cost
-            float newGCost = currentNode->gCost + glm::distance(currentNode->position, neighborPos);
-            
-            // Check if neighbor is in open set
-            auto neighborIt = openMap.find(neighborPos);
-            bool inOpenSet = neighborIt != openMap.end();
-            
-            // If not in open set or better path found
-            if (!inOpenSet || newGCost < neighborIt->second->gCost) {
-                float hCost = calculateHeuristic(neighborPos, currentTarget);
-                
-                // If not in open set, create new node
-                if (!inOpenSet) {
-                    PathNode* newNode = new PathNode{
-                        neighborPos,
-                        newGCost,
-                        hCost,
-                        currentNode
-                    };
-                    openSet.push(newNode);
-                    openMap[neighborPos] = newNode;
-                } else {
-                    // Update existing node
-                    PathNode* existingNode = neighborIt->second;
-                    existingNode->gCost = newGCost;
-                    existingNode->hCost = hCost;
-                    existingNode->parent = currentNode;
-                    
-                    // Need to reinsert into priority queue to update position
-                    // This is a workaround since we can't update priority directly
-                    openSet.push(existingNode);
-                }
-            }
-        }
-    }
-    
-    // If we couldn't find a complete path, use the closest node we found
-    if (closestNode != nullptr && closestNode != startNode) {
-        mPath = reconstructPath(closestNode);
-        
-        // Apply path smoothing if enabled
-        if (mSmoothPath.mValue) {
-            smoothPath();
-        }
-        
-        // Clean up memory
-        for (auto& pair : openMap) {
-            delete pair.second;
-        }
-        
-        mPathFound = true;
-        return true; // Return true for partial path
-    }
-    
-    // Clean up memory if no path found
-    for (auto& pair : openMap) {
-        delete pair.second;
-    }
-    
-    // No path found
-    mPathFound = false;
-    return false;
 }

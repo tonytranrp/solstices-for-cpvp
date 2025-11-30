@@ -148,6 +148,7 @@
 #include "Visual/UpdateForm.hpp"
 #include "Visual/ViewModel.hpp"
 #include "Visual/Watermark.hpp"
+#include "Visual/VectorRenderer.hpp"
 #include "Visual/Zoom.hpp"
 
 void ModuleManager::init()
@@ -291,6 +292,7 @@ void ModuleManager::init()
     mModules.emplace_back(std::make_shared<JumpCircles>());
     mModules.emplace_back(std::make_shared<Freelook>());
     mModules.emplace_back(std::make_shared<NoRender>());
+    mModules.emplace_back(std::make_shared<VectorRenderer>());
 
 
 #ifdef __PRIVATE_BUILD__
