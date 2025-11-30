@@ -49,8 +49,7 @@ private:
     glm::vec3 mSvPos;
     glm::vec3 mSvPosOld;
     glm::vec3 mOldPos;
-    ActorHeadRotationComponent mStaticHeadRot;
-    MobBodyRotationComponent mStaticBodyRot;
+   
     ActorRotationComponent mStaticRot;
     // Detached mode vars
     glm::vec3 mOrigin;

@@ -1,4 +1,4 @@
-// ================================
+﻿// ================================
 // ================================
 #include "AutoCrystal.hpp"
 
@@ -148,18 +148,12 @@ bool AutoCrystal::canPlaceCrystal(const BlockPos& pos, const std::vector<Actor*>
     auto* player = ClientInstance::get()->getLocalPlayer();
     if (!player) return false;
 
-    // Check if the base block is obsidian or bedrock
     const Block* baseBlock = bs->getBlock(pos);
     if (!baseBlock) return false;
     int baseId = baseBlock->mLegacy->getBlockId();
-    if (baseId != 49 && baseId != 7) { // 49 = obsidian, 7 = bedrock
+    if (baseId != 49 && baseId != 7) {
+        //spdlog::info("[AutoCrystal] Invalid base block at ({}, {}, {}), ID: {}", pos.x, pos.y, pos.z, baseId);
         return false;
-    }
-
-    // Check if there's enough vertical space (at least 2 blocks) using BlockUtils
-    int exposedHeight = BlockUtils::getExposedHeight(pos, 2);
-    if (exposedHeight < 2) {
-        return false; // Not enough vertical space for crystal
     }
 
     // Check if placement is only +1 above target's Y position
@@ -180,7 +174,8 @@ bool AutoCrystal::canPlaceCrystal(const BlockPos& pos, const std::vector<Actor*>
     if (targetActor) {
         float targetY = targetActor->getPos()->y;
         if (pos.y > floor(targetY) + 1) {
-            return false; // Position too high above target
+            //spdlog::info("[AutoCrystal] Position too high above target: crystal Y={}, target Y={}", pos.y, targetY);
+            return false;
         }
     }
 
@@ -213,8 +208,15 @@ bool AutoCrystal::canPlaceCrystal(const BlockPos& pos, const std::vector<Actor*>
             entityAABB.mMax = entityAABB.mMax + glm::vec3(0.05f, 0.f, 0.05f);
         }
 
+        // Debug output for AABB checks
+        //spdlog::info("[AutoCrystal] Entity AABB check: min({}, {}, {}), max({}, {}, {})",
+           // entityAABB.mMin.x, entityAABB.mMin.y, entityAABB.mMin.z,
+           // entityAABB.mMax.x, entityAABB.mMax.y, entityAABB.mMax.z);
+
         // Check intersection with adjusted hitboxes
         bool intersects = placeAABB.intersects(entityAABB);
+        //spdlog::info("[AutoCrystal] AABB Intersection result: {}", intersects);
+
         if (intersects)
             return false;
     }
@@ -232,15 +234,14 @@ std::vector<AutoCrystal::PlacePosition> AutoCrystal::findPlacePositions(const st
 
     BlockPos targetPos{};
     Actor* targetActor = nullptr;
-    float range = mPlaceRange.mValue;
+    int range = static_cast<int>(mPlaceRange.mValue);
     glm::vec3 playerPos = *player->getPos();
     auto* fakeplayer = gFeatureManager->mModuleManager->getModule<FakePlayer>();
-
+    
     // Determine target position and actor
     if (fakeplayer->mEnabled && fakeplayer) {
         targetPos = BlockPos(fakeplayer->mStaticPos);
-    }
-    else {
+    } else {
         float bestDist = std::numeric_limits<float>::max();
         for (auto* actor : runtimeActors) {
             if (actor == player || !actor->isValid() || !actor->isPlayer())
@@ -256,61 +257,58 @@ std::vector<AutoCrystal::PlacePosition> AutoCrystal::findPlacePositions(const st
         if (!targetActor)
             return bestCandidates;
         targetPos = *targetActor->getPos();
-
-        
     }
+
     // Store all valid positions with their scores
     std::vector<PlacePosition> allCandidates;
+    allCandidates.reserve(range * range * 7); // Pre-allocate for efficiency
 
-    // Use BlockUtils::getBlockList for more efficient block scanning
-    // Get all blocks within range of the target
-    std::vector<BlockInfo> blockList = BlockUtils::getBlockList(targetPos, range + 5); // Add extra range to account for vertical offset
+    // Search in a more thorough pattern, starting from bottom to top
+    for (int y = -5; y <= 1; y++) {
+        for (int x = -range; x <= range; x++) {
+            for (int z = -range; z <= range; z++) {
+                BlockPos checkPos = targetPos + BlockPos(x, y, z);
+                glm::vec3 checkCenter(checkPos.x + 0.5f, checkPos.y + 0.5f, checkPos.z + 0.5f);
+                glm::vec3 targetVec3(targetPos.x, targetPos.y, targetPos.z);
 
-    // Reserve space for efficiency
-    allCandidates.reserve(blockList.size() / 4); // Estimate that ~25% of blocks might be valid
+                // Basic range checks
+                float distToTarget = glm::distance(checkCenter, targetVec3);
+                float distToPlayer = glm::distance(checkCenter, playerPos);
+                if (distToTarget > mPlaceRange.mValue || distToPlayer > mPlaceRangePlayer.mValue)
+                    continue;
 
-    // Process each block from the list
-    for (const auto& blockInfo : blockList) {
-        const BlockPos& checkPos = blockInfo.mPosition;
-        glm::vec3 checkCenter(checkPos.x + 0.5f, checkPos.y + 0.5f, checkPos.z + 0.5f);
-        glm::vec3 targetVec3(targetPos.x, targetPos.y, targetPos.z);
+                // Validate crystal placement
+                if (!canPlaceCrystal(checkPos, runtimeActors, isfakeplayer))
+                    continue;
 
-        // Basic range checks
-        float distToTarget = glm::distance(checkCenter, targetVec3);
-        float distToPlayer = glm::distance(checkCenter, playerPos);
-        if (distToTarget > mPlaceRange.mValue || distToPlayer > mPlaceRangePlayer.mValue)
-            continue;
+                // Calculate damage
+                float targetDamage = calculateDamage(checkPos, targetActor, isfakeplayer);
+                if (targetDamage < mMinimumDamage.mValue)
+                    continue;
 
-        // Validate crystal placement
-        if (!canPlaceCrystal(checkPos, runtimeActors, isfakeplayer))
-            continue;
+                // Calculate vertical distance from target's feet
+                float verticalDistFromFeet = std::abs(checkPos.y - targetPos.y);
+                
+                // Calculate a weighted score that prioritizes:
+                // 1. Higher damage (primary factor)
+                // 2. Closer to target's feet (secondary factor)
+                // 3. Closer to target horizontally (tertiary factor)
+                float damageWeight = 1.0f;
+                float verticalWeight = 0.3f;
+                float horizontalWeight = 0.2f;
 
-        // Calculate damage
-        float targetDamage = calculateDamage(checkPos, targetActor, isfakeplayer);
-        if (targetDamage < mMinimumDamage.mValue)
-            continue;
+                float horizontalDist = std::sqrt(
+                    std::pow(checkPos.x - targetPos.x, 2) +
+                    std::pow(checkPos.z - targetPos.z, 2)
+                );
 
-        // Calculate vertical distance from target's feet
-        float verticalDistFromFeet = std::abs(checkPos.y - targetPos.y);
+                float score = (targetDamage * damageWeight) -
+                             (verticalDistFromFeet * verticalWeight) -
+                             (horizontalDist * horizontalWeight);
 
-        // Calculate a weighted score that prioritizes:
-        // 1. Higher damage (primary factor)
-        // 2. Closer to target's feet (secondary factor)
-        // 3. Closer to target horizontally (tertiary factor)
-        float damageWeight = 1.0f;
-        float verticalWeight = 0.3f;
-        float horizontalWeight = 0.2f;
-
-        float horizontalDist = std::sqrt(
-            std::pow(checkPos.x - targetPos.x, 2) +
-            std::pow(checkPos.z - targetPos.z, 2)
-        );
-
-        float score = (targetDamage * damageWeight) -
-            (verticalDistFromFeet * verticalWeight) -
-            (horizontalDist * horizontalWeight);
-
-        allCandidates.emplace_back(checkPos, score, targetDamage);
+                allCandidates.emplace_back(checkPos, score, targetDamage);
+            }
+        }
     }
 
     // Sort all candidates by their weighted score
@@ -327,7 +325,6 @@ std::vector<AutoCrystal::PlacePosition> AutoCrystal::findPlacePositions(const st
 
     return bestCandidates;
 }
-
 std::vector<AutoCrystal::BreakTarget> AutoCrystal::findBreakTargets(const std::vector<Actor*>& runtimeActors, bool isfakeplayer) {
     std::vector<BreakTarget> breakTargets;
     auto* player = ClientInstance::get()->getLocalPlayer();

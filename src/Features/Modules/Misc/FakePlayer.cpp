@@ -11,7 +11,6 @@ void FakePlayer::onEnable() {
         return;
     }
 
-    // Store current player state for the static player
     mLastRot = *player->getActorRotationComponent();
     mLastHeadRot = *player->getActorHeadRotationComponent();
     mLastBodyRot = *player->getMobBodyRotationComponent();
@@ -25,16 +24,11 @@ void FakePlayer::onEnable() {
     aabbmax = mAABBMax;
     mStaticPos = mOldPos;
 
-    // Store static rotations
+    // Store static rotation
     mStaticRot = mLastRot;
-    mStaticHeadRot = mLastHeadRot;
-    mStaticBodyRot = mLastBodyRot;
 
-    // Enable third person camera rendering
     player->setFlag<RenderCameraComponent>(true);
     player->setFlag<CameraRenderPlayerModelComponent>(true);
-    
-    ChatUtils::displayClientMessage("FakePlayer enabled. You should now see both a static player and your moving player.");
 
     gFeatureManager->mDispatcher->listen<ActorRenderEvent, &FakePlayer::onActorRenderEvent, nes::event_priority::VERY_FIRST>(this);
 }
@@ -59,30 +53,11 @@ void FakePlayer::onActorRenderEvent(ActorRenderEvent& event) {
     auto original = event.mDetour->getOriginal<&ActorRenderDispatcherHook::render>();
 
     // Use stored static position and rotation
-    // Calculate static position relative to camera
     auto staticPos = mStaticPos - *event.mCameraTargetPos;
-    
-    // Use stored static rotation without any modifications
-    auto staticRot = glm::vec2(mStaticRot.mPitch, mStaticRot.mYaw);
-    
-    // Save current rotations
-    auto currentRot = *player->getActorRotationComponent();
-    auto currentHeadRot = *player->getActorHeadRotationComponent();
-    auto currentBodyRot = *player->getMobBodyRotationComponent();
-
-    // Set static rotations for the fake player
-    *player->getActorRotationComponent() = mStaticRot;
-    *player->getActorHeadRotationComponent() = mStaticHeadRot;
-    *player->getMobBodyRotationComponent() = mStaticBodyRot;
-
-    // Render the static player
-    original(event._this, event.mEntityRenderContext, event.mEntity, event.mCameraTargetPos, &staticPos, event.mRot, event.mIgnoreLighting);
-
-    // Restore rotations for the real player
-    *player->getActorRotationComponent() = currentRot;
-    *player->getActorHeadRotationComponent() = currentHeadRot;
-    *player->getMobBodyRotationComponent() = currentBodyRot;
-    
-    // Don't cancel the event so the real player will also be rendered
-    // This allows both the static fake player and the moving real player to be visible
+    auto staticRot = glm::vec2(mStaticRot.mPitch, mStaticRot.mYaw) - *event.mRot;
+   // glm::vec2 staticRot(mStaticRot.mPitch, mStaticRot.mYaw);
+    auto rots = glm::vec2{ 0,45 };
+    auto mCameraTargetPos = glm::vec3{ 0,5,0 };
+    original(event._this, event.mEntityRenderContext, event.mEntity, &mCameraTargetPos, &staticPos, &rots, event.mIgnoreLighting);
+    event.cancel();
 }
