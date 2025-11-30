@@ -52,7 +52,6 @@ void FileUtils::validateDirectories()
     createDirectory(getSolsticeDir() + "Scripts\\");
     createDirectory(getSolsticeDir() + "Scripts\\Commands\\");
     createDirectory(getSolsticeDir() + "Scripts\\Modules\\");
-    createDirectory(getSolsticeDir() + "Vector\\");
     //createFile(getSolsticeDir() + "Scripts\\Libs\\");
 
 
