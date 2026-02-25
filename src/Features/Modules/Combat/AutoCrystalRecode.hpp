@@ -4,6 +4,8 @@
 //
 
 #include <Features/Modules/Module.hpp>
+#include <SDK/Minecraft/Inventory/SimpleContainer.hpp>
+#include <SDK/Minecraft/Inventory/ItemStack.hpp>
 
 
 class AutoCrystalRecode : public ModuleBase<AutoCrystalRecode>

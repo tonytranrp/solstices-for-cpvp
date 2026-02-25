@@ -14,8 +14,14 @@ void ActorRenderDispatcherHook::render(ActorRenderDispatcher* _this, BaseActorRe
     Actor* entity, glm::vec3* cameraTargetPos, glm::vec3* pos, glm::vec2* rot, bool ignoreLighting)
 {
     auto oFunc = mDetour->getOriginal<&render>();
-    auto localPlayer = ClientInstance::get()->getLocalPlayer();
-    if (!localPlayer) return;
+    if (!oFunc) return;
+
+    auto* clientInstance = ClientInstance::get();
+    auto* localPlayer = clientInstance ? clientInstance->getLocalPlayer() : nullptr;
+    if (!localPlayer || !gFeatureManager || !gFeatureManager->mDispatcher) {
+        oFunc(_this, entityRenderContext, entity, cameraTargetPos, pos, rot, ignoreLighting);
+        return;
+    }
 
     auto holder = nes::make_holder<ActorRenderEvent>(_this, entityRenderContext, entity, cameraTargetPos, pos, rot, ignoreLighting, mDetour.get());
     gFeatureManager->mDispatcher->trigger(holder);
@@ -24,7 +30,7 @@ void ActorRenderDispatcherHook::render(ActorRenderDispatcher* _this, BaseActorRe
         return;
     }
 
-    return oFunc(_this, entityRenderContext, entity, cameraTargetPos, pos, rot, ignoreLighting);
+    oFunc(_this, entityRenderContext, entity, cameraTargetPos, pos, rot, ignoreLighting);
 }
 
 void ActorRenderDispatcherHook::init()

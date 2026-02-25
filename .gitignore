@@ -20,4 +20,5 @@ CMakeUserPresets.json
 CMakeSettings.json
 /cryptopp-cmake/
 /Includes/magic_vtable/
+/External/
 

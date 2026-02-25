@@ -22,8 +22,17 @@
 #include <SDK/Minecraft/Network/Packets/PlayerAuthInputPacket.hpp>
 #include <SDK/Minecraft/Network/Packets/RemoveActorPacket.hpp>
 #include <SDK/Minecraft/Rendering/GuiData.hpp>
-#include <SDK/Minecraft/Network/Packets/AddActorPacket.hpp>
+#include <SDK/Minecraft/World/Chunk/LevelChunk.hpp>
 #include <random>
+#include <limits>
+#include <algorithm>
+#include <cmath>
+
+namespace {
+int floorDiv16(int value) {
+    return (value >= 0) ? (value / 16) : ((value - 15) / 16);
+}
+}
 
 void AutoCrystal::onEnable() {
     gFeatureManager->mDispatcher->listen<BaseTickEvent, &AutoCrystal::onBaseTickEvent>(this);
@@ -38,11 +47,14 @@ void AutoCrystal::onDisable() {
     gFeatureManager->mDispatcher->deafen<RenderEvent, &AutoCrystal::onRenderEvent>(this);
     gFeatureManager->mDispatcher->deafen<PacketOutEvent, &AutoCrystal::onPacketOutEvent>(this);
     gFeatureManager->mDispatcher->deafen<PacketInEvent, &AutoCrystal::onPacketInEvent>(this);
-    mPossiblePlacements.clear();
+    {
+        std::lock_guard<std::mutex> lock(blockmutex);
+        mPossiblePlacements.clear();
+        mBreakTargetPos = {};
+        mHasBreakTarget = false;
+    }
     //rots = {};
     switchBack();
-    mBreakTargetPos = {};
-    mHasBreakTarget = false;
     mLastTarget = nullptr;
     mRotating = false;
 }
@@ -136,84 +148,152 @@ bool AutoCrystal::canPlaceCrystal(const BlockPos& pos, const std::vector<Actor*>
     }
     return true;
 }
-std::vector<AutoCrystal::PlacePosition> AutoCrystal::findPlacePositions(const std::vector<Actor*>& runtimeActors) {
-    std::vector<PlacePosition> positions;
-    auto* player = ClientInstance::get()->getLocalPlayer();
-    if (!player)
-        return positions;
 
-    // Identify the closest valid enemy actor (ignoring friends and invalid actors)
+Actor* AutoCrystal::findClosestTarget(const std::vector<Actor*>& runtimeActors, Actor* player) const {
+    if (!player) return nullptr;
+
     Actor* targetActor = nullptr;
     float closestDist = std::numeric_limits<float>::max();
-    glm::vec3 playerPos = *player->getPos();
+    const glm::vec3 playerPos = *player->getPos();
+
     for (auto* actor : runtimeActors) {
-        if (actor == player ||!actor->isValid() || !actor->isPlayer()) continue;
+        if (!actor || actor == player || !actor->isValid() || !actor->isPlayer()) continue;
         if (Friends::isFriend(actor->getNameTag())) continue;
-        float dist = glm::distance(*actor->getPos(), playerPos);
+
+        const float dist = glm::distance(*actor->getPos(), playerPos);
         if (dist > mRange.mValue) continue;
         if (dist < closestDist) {
             closestDist = dist;
             targetActor = actor;
         }
     }
-    if (!targetActor)
-        return positions;  // no target found
 
-    // Use target actor's position as the center for searching placement positions
-    BlockPos targetPos = *targetActor->getPos();
-    int range = static_cast<int>(mPlaceRange.mValue);  // search radius around target
-    const int yMin = -5, yMax = 1;                     // vertical search limits relative to target
+    return targetActor;
+}
 
-    // Precompute candidate offsets sorted by their squared distance from (0,0,0)
-    struct Offset { int x, y, z; float sqrDist; };
-    static std::vector<Offset> sortedOffsets;
-    static int lastRange = -1;
-    if (range != lastRange || sortedOffsets.empty()) {
-        sortedOffsets.clear();
-        for (int dx = -range; dx <= range; ++dx) {
-            for (int dy = yMin; dy <= yMax; ++dy) {
-                for (int dz = -range; dz <= range; ++dz) {
-                    float sqDist = static_cast<float>(dx * dx + dy * dy + dz * dz);
-                    sortedOffsets.push_back({ dx, dy, dz, sqDist });
+std::vector<BlockPos> AutoCrystal::collectSubChunkPlacementBases(const BlockPos& targetPos, float horizontalRange, int minYOffset, int maxYOffset) const {
+    std::vector<BlockPos> candidates;
+
+    auto* blockSource = ClientInstance::get()->getBlockSource();
+    if (!blockSource) return candidates;
+
+    const int radius = static_cast<int>(std::ceil(horizontalRange));
+    const int minX = targetPos.x - radius;
+    const int maxX = targetPos.x + radius;
+    const int minZ = targetPos.z - radius;
+    const int maxZ = targetPos.z + radius;
+    const int minY = targetPos.y + minYOffset;
+    const int maxY = targetPos.y + maxYOffset;
+
+    const int buildDepth = blockSource->getBuildDepth();
+    const int buildMaxY = blockSource->getBuildHeight() - 1;
+    const int clampedMinY = std::max(minY, buildDepth);
+    const int clampedMaxY = std::min(maxY, buildMaxY);
+    if (clampedMinY > clampedMaxY) return candidates;
+
+    const int minChunkX = floorDiv16(minX);
+    const int maxChunkX = floorDiv16(maxX);
+    const int minChunkZ = floorDiv16(minZ);
+    const int maxChunkZ = floorDiv16(maxZ);
+    const int minSubChunk = (clampedMinY - buildDepth) >> 4;
+    const int maxSubChunk = (clampedMaxY - buildDepth) >> 4;
+
+    for (int chunkX = minChunkX; chunkX <= maxChunkX; ++chunkX) {
+        for (int chunkZ = minChunkZ; chunkZ <= maxChunkZ; ++chunkZ) {
+            LevelChunk* chunk = blockSource->getChunk(ChunkPos(chunkX, chunkZ));
+            if (!chunk) continue;
+
+            auto* subChunks = chunk->getSubChunks();
+            if (!subChunks || subChunks->empty()) continue;
+
+            const int chunkBaseX = chunkX * 16;
+            const int chunkBaseZ = chunkZ * 16;
+            const int chunkMinSub = std::max(minSubChunk, 0);
+            const int chunkMaxSub = std::min(maxSubChunk, static_cast<int>(subChunks->size()) - 1);
+            if (chunkMinSub > chunkMaxSub) continue;
+
+            for (int subIndex = chunkMinSub; subIndex <= chunkMaxSub; ++subIndex) {
+                const auto& subChunk = (*subChunks)[subIndex];
+                SubChunkBlockStorage* blockReader = subChunk.blockReadPtr;
+                if (!blockReader) continue;
+
+                const int subChunkBaseY = subChunk.subchunkIndex * 16;
+                const int localMinY = std::max(clampedMinY - subChunkBaseY, 0);
+                const int localMaxY = std::min(clampedMaxY - subChunkBaseY, 15);
+                if (localMinY > localMaxY) continue;
+
+                for (int x = 0; x < 16; ++x) {
+                    const int worldX = chunkBaseX + x;
+                    if (worldX < minX || worldX > maxX) continue;
+
+                    for (int z = 0; z < 16; ++z) {
+                        const int worldZ = chunkBaseZ + z;
+                        if (worldZ < minZ || worldZ > maxZ) continue;
+
+                        for (int y = localMinY; y <= localMaxY; ++y) {
+                            const uint16_t elementId = static_cast<uint16_t>((x * 0x10 + z) * 0x10 + (y & 0xF));
+                            const Block* found = blockReader->getElement(elementId);
+                            if (!found || !found->mLegacy) continue;
+
+                            const int blockId = found->mLegacy->getBlockId();
+                            if (blockId != 49 && blockId != 7) continue;
+
+                            BlockPos basePos(worldX, subChunkBaseY + y, worldZ);
+                            if (BlockUtils::getExposedHeight(basePos, 2) < 2) continue;
+                            candidates.emplace_back(basePos);
+                        }
+                    }
                 }
             }
         }
-        std::sort(sortedOffsets.begin(), sortedOffsets.end(), [](const Offset& a, const Offset& b) {
-            return a.sqrDist < b.sqrDist;
-            });
-        lastRange = range;
     }
+
+    return candidates;
+}
+
+std::vector<AutoCrystal::PlacePosition> AutoCrystal::findPlacePositions(const std::vector<Actor*>& runtimeActors) {
+    std::vector<PlacePosition> positions;
+    auto* player = ClientInstance::get()->getLocalPlayer();
+    if (!player) return positions;
+
+    Actor* targetActor = findClosestTarget(runtimeActors, player);
+    if (!targetActor) return positions;
 
     float bestScore = -std::numeric_limits<float>::infinity();
     PlacePosition bestCandidate;
     bool foundCandidate = false;
-    glm::vec3 targetCenter = *targetActor->getPos();
+    const glm::vec3 targetCenter = *targetActor->getPos();
+    const glm::vec3 playerPos = *player->getPos();
+    const float placeRangeSq = mPlaceRange.mValue * mPlaceRange.mValue;
+    const float placeRangePlayerSq = mPlaceRangePlayer.mValue * mPlaceRangePlayer.mValue;
 
-    // Iterate over candidate offsets
-    for (const Offset& off : sortedOffsets) {
-        BlockPos checkPos = targetPos + BlockPos(off.x, off.y, off.z);
-        // Determine the crystal's center position (where explosion occurs)
-        glm::vec3 crystalCenter(checkPos.x + 0.5f, checkPos.y + 1.0f, checkPos.z + 0.5f);
+    const std::vector<BlockPos> candidates = collectSubChunkPlacementBases(
+        BlockPos(targetCenter),
+        mPlaceRange.mValue,
+        -5,
+        1
+    );
 
-        // Basic range filtering: skip if too far from target or player.
-        if (glm::distance(crystalCenter, targetCenter) > mPlaceRange.mValue) continue;
-        if (glm::distance(crystalCenter, playerPos) > mPlaceRangePlayer.mValue) continue;
+    for (const BlockPos& checkPos : candidates) {
+        const glm::vec3 crystalCenter(checkPos.x + 0.5f, checkPos.y + 1.0f, checkPos.z + 0.5f);
+        const glm::vec3 toTarget = crystalCenter - targetCenter;
+        const glm::vec3 toPlayer = crystalCenter - playerPos;
 
-        // Validity check: ensure we can place a crystal at this block
+        if (glm::dot(toTarget, toTarget) > placeRangeSq) continue;
+        if (glm::dot(toPlayer, toPlayer) > placeRangePlayerSq) continue;
         if (!canPlaceCrystal(checkPos, runtimeActors)) continue;
 
-        // Compute the (clamped) damage the explosion would do to the target.
-        float candidateDamage = calculateDamage(checkPos, targetActor);
+        const float candidateDamage = calculateDamage(checkPos, targetActor);
         if (candidateDamage < mMinimumDamage.mValue) continue;
+        const float selfDamage = calculateDamage(checkPos, player);
+        if (selfDamage > mMaxSelfDamage.mValue) continue;
 
-        // Compute a composite score:
-        //   Higher damage is better; also, being closer to the target is preferred.
-        float distToTarget = glm::distance(crystalCenter, targetCenter);
-        float score = candidateDamage - (distToTarget * 0.1f);  // tweak the factor as needed
+        const float distToTarget = glm::length(toTarget);
+        const float score = candidateDamage - (selfDamage * 0.35f) - (distToTarget * 0.08f);
 
         if (!foundCandidate || score > bestScore) {
             bestScore = score;
-            bestCandidate = PlacePosition(checkPos, candidateDamage, 0.0f);
+            bestCandidate = PlacePosition(checkPos, candidateDamage, selfDamage);
             foundCandidate = true;
         }
     }
@@ -392,8 +472,11 @@ void AutoCrystal::breakCrystal(Actor* crystal)
         return;
 
     // Record break target rotation information.
-    mBreakTargetPos = *crystal->getPos();
-    mHasBreakTarget = true;
+    {
+        std::lock_guard<std::mutex> lock(blockmutex);
+        mBreakTargetPos = *crystal->getPos();
+        mHasBreakTarget = true;
+    }
 
     // If we are in silent mode & spoofing, do it once
     if (mSwitchMode.mValue == SwitchMode::Silent && mShouldSpoofSlot)
@@ -429,12 +512,12 @@ void AutoCrystal::breakCrystal(Actor* crystal)
     player->swing();
 }
 
-std::vector<AutoCrystal::PlacePosition> AutoCrystal::getplacmenet(const std::vector<Actor*>& runtimeActors) {
+std::vector<AutoCrystal::PlacePosition> AutoCrystal::getPlacementCandidates(const std::vector<Actor*>& runtimeActors) {
     std::vector<AutoCrystal::PlacePosition> placementpos;
     if (NOW - mLastsearchPlace < mPlaceSearchDelay.mValue) return placementpos;
     placementpos = findPlacePositions(runtimeActors);
-    return placementpos;
     mLastsearchPlace = NOW;
+    return placementpos;
 }
 void AutoCrystal::onBaseTickEvent(BaseTickEvent& event) {
     if (!mAutoPlace.mValue) return;
@@ -450,10 +533,13 @@ void AutoCrystal::onBaseTickEvent(BaseTickEvent& event) {
 
     // Get potential placements using the pre-obtained runtime list.
 
-    auto placements = getplacmenet(runtimeActors);
+    auto placements = getPlacementCandidates(runtimeActors);
 
 
-    mPossiblePlacements = placements;
+    {
+        std::lock_guard<std::mutex> lock(blockmutex);
+        mPossiblePlacements = placements;
+    }
     if (!placements.empty()) {
         // Place crystal at best candidate.
         placeCrystal(placements[0]);
@@ -473,9 +559,7 @@ void AutoCrystal::onBaseTickEvent(BaseTickEvent& event) {
     }
 }
 void AutoCrystal::onPacketInEvent(PacketInEvent& event) {
-    if (event.mPacket->getId() == PacketID::AddActor) {
-        auto packet = event.getPacket<AddActorPacket>();
-    }
+    (void)event;
 }
 void AutoCrystal::onPacketOutEvent(PacketOutEvent& event) {
     auto* player = ClientInstance::get()->getLocalPlayer();
@@ -487,14 +571,11 @@ void AutoCrystal::onPacketOutEvent(PacketOutEvent& event) {
         if (!pkt || !pkt->mTransaction) return;
 
         if (pkt->mTransaction->type == ComplexInventoryTransaction::Type::ItemUseTransaction) {
-            auto* transac = reinterpret_cast<ItemUseInventoryTransaction*>(pkt->mTransaction.get());
+            auto* transac = static_cast<ItemUseInventoryTransaction*>(pkt->mTransaction.get());
             if (transac->mActionType == ItemUseInventoryTransaction::ActionType::Place) {
-                if (!mPossiblePlacements.empty()) {
-                    transac->mClickPos = mPossiblePlacements[0].position;
-                }
-                else {
-                    transac->mClickPos = BlockUtils::clickPosOffsets[transac->mFace];
-                }
+                const auto clickPosIt = BlockUtils::clickPosOffsets.find(static_cast<int>(transac->mFace));
+                if (clickPosIt == BlockUtils::clickPosOffsets.end()) return;
+                transac->mClickPos = clickPosIt->second;
 
                 for (int i = 0; i < 3; i++) {
                     if (transac->mClickPos[i] == 0.5f) {
@@ -511,19 +592,33 @@ void AutoCrystal::onPacketOutEvent(PacketOutEvent& event) {
         auto pkt = event.getPacket<PlayerAuthInputPacket>();
         if (!pkt) return;
 
+        bool hasPlacementTarget = false;
+        bool hasBreakTarget = false;
+        glm::vec3 placementTargetPos{};
+        glm::vec3 breakTargetPos{};
+        {
+            std::lock_guard<std::mutex> lock(blockmutex);
+            if (!mPossiblePlacements.empty()) {
+                placementTargetPos = glm::vec3(mPossiblePlacements[0].position);
+                hasPlacementTarget = true;
+            }
+            breakTargetPos = mBreakTargetPos;
+            hasBreakTarget = mHasBreakTarget;
+        }
+
         // Only proceed if we have at least one valid target (placement or break).
-        if (mPossiblePlacements.empty() && !mHasBreakTarget) return;
+        if (!hasPlacementTarget && !hasBreakTarget) return;
 
         glm::vec3 targetPos;
-        if (!mPossiblePlacements.empty() && mHasBreakTarget) {
+        if (hasPlacementTarget && hasBreakTarget) {
             // Average the positions for a combined rotation.
-            targetPos = (glm::vec3(mPossiblePlacements[0].position) + mBreakTargetPos) * 0.5f;
+            targetPos = (placementTargetPos + breakTargetPos) * 0.5f;
         }
-        else if (!mPossiblePlacements.empty()) {
-            targetPos = glm::vec3(mPossiblePlacements[0].position);
+        else if (hasPlacementTarget) {
+            targetPos = placementTargetPos;
         }
         else {
-            targetPos = mBreakTargetPos;
+            targetPos = breakTargetPos;
         }
 
         auto rots = MathUtils::getRots(*player->getPos(), targetPos);
@@ -534,6 +629,12 @@ void AutoCrystal::onPacketOutEvent(PacketOutEvent& event) {
 void AutoCrystal::onRenderEvent(RenderEvent& event) {
     // If visualizations are disabled, there's nothing to do
     if (!mVisualizePlace.mValue) return;
+
+    std::vector<PlacePosition> placementsSnapshot;
+    {
+        std::lock_guard<std::mutex> lock(blockmutex);
+        placementsSnapshot = mPossiblePlacements;
+    }
 
     ImDrawList* drawList = ImGui::GetBackgroundDrawList();
     if (!drawList) return;
@@ -562,13 +663,13 @@ void AutoCrystal::onRenderEvent(RenderEvent& event) {
         // Step 1: Build a set of current positions so we know
         // which are newly added, which remain, and which have disappeared.
         std::unordered_set<BlockPos> currentPosSet;
-        currentPosSet.reserve(mPossiblePlacements.size());
-        for (auto& place : mPossiblePlacements) {
+        currentPosSet.reserve(placementsSnapshot.size());
+        for (auto& place : placementsSnapshot) {
             currentPosSet.insert(place.position);
         }
 
         // Step 2: For any newly visible positions, ensure they exist in our fade map
-        for (auto& place : mPossiblePlacements) {
+        for (auto& place : placementsSnapshot) {
             if (sFadeAlphaMap.find(place.position) == sFadeAlphaMap.end()) {
                 sFadeAlphaMap[place.position] = 0.0f; // start invisible
             }
@@ -633,10 +734,10 @@ void AutoCrystal::onRenderEvent(RenderEvent& event) {
     else if (mRenderMode.mValue == ACVisualRenderMode::Square)
     {
         // If there's nothing to show, skip
-        if (mPossiblePlacements.empty()) return;
+        if (placementsSnapshot.empty()) return;
 
         // Take the best candidate as an example
-        const BlockPos& bestPos = mPossiblePlacements[0].position;
+        const BlockPos& bestPos = placementsSnapshot[0].position;
 
         // Convert center of block to screen coordinates
         glm::vec3 worldCenter(bestPos.x + 0.5f, bestPos.y + 0.5f, bestPos.z + 0.5f);
@@ -673,7 +774,7 @@ void AutoCrystal::onRenderEvent(RenderEvent& event) {
         static BlockPos sLastBestPos;
 
         // If we have no placements
-        if (mPossiblePlacements.empty())
+        if (placementsSnapshot.empty())
         {
             // Fade out if we previously had a position
             if (sInitialized && sCurrentAlpha > 0.0f) {
@@ -707,7 +808,7 @@ void AutoCrystal::onRenderEvent(RenderEvent& event) {
         }
 
         // We do have placements
-        const BlockPos& bestPos = mPossiblePlacements[0].position;
+        const BlockPos& bestPos = placementsSnapshot[0].position;
         glm::vec3 targetPos(bestPos.x, bestPos.y, bestPos.z);
 
         // On first run or if we just started, set up

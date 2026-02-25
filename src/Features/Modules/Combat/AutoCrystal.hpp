@@ -2,6 +2,7 @@
 
 #include <Features/Modules/Module.hpp>
 #include <unordered_set>
+#include <mutex>
 #include <SDK/Minecraft/World/Chunk/SubChunkBlockStorage.hpp>
 #include <Features/FeatureManager.hpp>
 #include <Features/Events/BlockChangedEvent.hpp>
@@ -42,29 +43,6 @@ public:
 
         BreakTarget(Actor* act, float targetDmg, float selfDmg)
             : crystal(act), targetDamage(targetDmg), selfDamage(selfDmg) {
-        }
-    };
-
-    // --- Calculation Unit Struct ---
-    struct CalcUnit {
-        BlockPos position{};
-        glm::vec3 explosionPos{};
-        glm::vec3 targetPos{};
-        float distance{};
-        float visibility{};
-
-        CalcUnit(const BlockPos& pos, const glm::vec3& explosion, const glm::vec3& target)
-            : position(pos), explosionPos(explosion), targetPos(target) {
-            distance = glm::distance(target, explosion);
-            // For demonstration, assume full visibility.
-            visibility = 1.0f;
-        }
-    };
-
-    // --- Compare Struct ---
-    struct PlacePositionCompare {
-        bool operator()(const PlacePosition& a, const PlacePosition& b) const {
-            return a.targetDamage > b.targetDamage;
         }
     };
 
@@ -212,9 +190,11 @@ private:
     bool canPlaceCrystal(const BlockPos& pos, const std::vector<Actor*>& runtimeActors);
     std::vector<PlacePosition> findPlacePositions(const std::vector<Actor*>& runtimeActors);
     std::vector<BreakTarget> findBreakTargets(const std::vector<Actor*>& runtimeActors);
+    Actor* findClosestTarget(const std::vector<Actor*>& runtimeActors, Actor* player) const;
+    std::vector<BlockPos> collectSubChunkPlacementBases(const BlockPos& targetPos, float horizontalRange, int minYOffset, int maxYOffset) const;
     void placeCrystal(const PlacePosition& pos);
     void breakCrystal(Actor* crystal);
-    std::vector<PlacePosition> getplacmenet(const std::vector<Actor*>& runtimeActors);
+    std::vector<PlacePosition> getPlacementCandidates(const std::vector<Actor*>& runtimeActors);
     std::vector<PlacePosition> mPossiblePlacements;
     uint64_t mLastPlace = 0;
     uint64_t mLastsearchPlace = 0;

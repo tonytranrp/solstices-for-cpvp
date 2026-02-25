@@ -20,7 +20,7 @@ namespace
 using Kind = Variant<TypeId, TypePackId>;
 
 template<typename T>
-const T* get(const Kind& kind)
+const T* getKind(const Kind& kind)
 {
     return get_if<T>(&kind);
 }
@@ -129,9 +129,9 @@ private:
 
     std::optional<Kind> find(Kind kind) const
     {
-        if (auto ty = get<TypeId>(kind))
+        if (auto ty = getKind<TypeId>(kind))
             return find(*ty);
-        else if (auto tp = get<TypePackId>(kind))
+        else if (auto tp = getKind<TypePackId>(kind))
             return find(*tp);
         else
         {
@@ -248,9 +248,9 @@ private:
 
     void cloneChildren(Kind kind)
     {
-        if (auto ty = get<TypeId>(kind))
+        if (auto ty = getKind<TypeId>(kind))
             return cloneChildren(*ty);
-        else if (auto tp = get<TypePackId>(kind))
+        else if (auto tp = getKind<TypePackId>(kind))
             return cloneChildren(*tp);
         else
             LUAU_ASSERT(!"Item holds neither TypeId nor TypePackId when enqueuing its children?");
