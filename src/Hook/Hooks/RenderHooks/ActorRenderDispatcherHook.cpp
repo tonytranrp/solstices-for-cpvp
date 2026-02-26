@@ -31,3 +31,12 @@ void ActorRenderDispatcherHook::init()
 {
     mDetour = std::make_unique<Detour>("ActorRenderDispatcher::render", reinterpret_cast<void*>(SigManager::ActorRenderDispatcher_render), &ActorRenderDispatcherHook::render);
 }
+
+void ActorRenderDispatcherHook::shutdown()
+{
+    if (mDetour)
+    {
+        mDetour->restore();
+        mDetour.reset();
+    }
+}

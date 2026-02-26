@@ -36,11 +36,26 @@ void FeatureManager::shutdown()
 {
     spdlog::info("shutting down FeatureManager");
 
-    spdlog::info("shutting down CommandManager");
-    mCommandManager->shutdown();
+    if (mScriptManager)
+    {
+        spdlog::info("shutting down ScriptManager");
+        mScriptManager->shutdown();
+        mScriptManager.reset();
+    }
 
-    spdlog::info("shutting down ModuleManager");
-    mModuleManager->shutdown();
+    if (mCommandManager)
+    {
+        spdlog::info("shutting down CommandManager");
+        mCommandManager->shutdown();
+        mCommandManager.reset();
+    }
+
+    if (mModuleManager)
+    {
+        spdlog::info("shutting down ModuleManager");
+        mModuleManager->shutdown();
+        mModuleManager.reset();
+    }
 
     spdlog::info("shutting down event dispatcher");
     mDispatcher.reset();

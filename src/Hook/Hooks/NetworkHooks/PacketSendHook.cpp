@@ -91,3 +91,12 @@ void PacketSendHook::sendPacket(PlayerAuthInputPacket* packet) {
 void PacketSendHook::init() {
     mDetour = std::make_unique<Detour>("LoopbackPacketSender::send", reinterpret_cast<void*>(ClientInstance::get()->getPacketSender()->vtable[2]), &PacketSendHook::onPacketSend);
 }
+
+void PacketSendHook::shutdown()
+{
+    if (mDetour)
+    {
+        mDetour->restore();
+        mDetour.reset();
+    }
+}

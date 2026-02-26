@@ -5,6 +5,7 @@
 #include "OffsetProvider.hpp"
 
 #include <Solstice.hpp>
+#include <Utils/Concurrency/TaskSystem.hpp>
 #include <Utils/MemUtils.hpp>
 #include <libhat.hpp>
 
@@ -12,27 +13,29 @@
 
 hat::scan_result OffsetProvider::scanSig(hat::signature_view sig, const std::string& name, int offset)
 {
-    mSigScanCount++;
+    mSigScanCount.fetch_add(1, std::memory_order_relaxed);
     auto minecraft = hat::process::get_process_module();
     auto result = hat::find_pattern(sig, ".text", minecraft);
 
     if (!result.has_result()) {
+        std::lock_guard<std::mutex> lock(mSigMutex);
         mSigs[name] = 0;
         return {};
     }
 
-    mSigs[name] = reinterpret_cast<uintptr_t>(result.get()) + offset;
+    {
+        std::lock_guard<std::mutex> lock(mSigMutex);
+        mSigs[name] = reinterpret_cast<uintptr_t>(result.get()) + offset;
+    }
     return result;
 }
 
 void OffsetProvider::initialize()
 {
     int64_t start = NOW;
-    #pragma omp parallel for
-    for (int i = 0; i < mSigInitializers.size(); i++)
-    {
+    TaskSystem::parallelForIndex<size_t>(0, mSigInitializers.size(), [](size_t i) {
         mSigInitializers[i]();
-    }
+    });
     uint64_t end = NOW;
 
     for (const auto& sig : mSigs)
@@ -73,7 +76,7 @@ void OffsetProvider::initialize()
     }
 #endif
 
-    Solstice::console->info("[offsets] initialized in {}ms, {} total sigs scanned", end - start, mSigScanCount);
+    Solstice::console->info("[offsets] initialized in {}ms, {} total sigs scanned", end - start, mSigScanCount.load(std::memory_order_relaxed));
     mIsInitialized = true;
 }
 
@@ -83,6 +86,7 @@ void OffsetProvider::deinitialize()
 
     mSigInitializers.clear();
     mSigs.clear();
+    mSigScanCount.store(0, std::memory_order_relaxed);
 
     mIsInitialized = false;
 }

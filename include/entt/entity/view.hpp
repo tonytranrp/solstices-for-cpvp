@@ -152,7 +152,7 @@ struct extended_view_iterator final {
     }
 
     [[nodiscard]] reference operator*() const noexcept {
-        return std::apply([entt = *it](auto *...curr) { return std::tuple_cat(std::make_tuple(entt), static_cast<Type *>(const_cast<constness_as_t<typename Type::base_type, Type> *>(curr))->get_as_tuple(entt)...); }, it.pools);
+        return std::apply([entt = *it](auto *...curr) { return std::tuple_cat(std::make_tuple(entt), static_cast<Type *>(const_cast<std::remove_const_t<std::remove_pointer_t<decltype(curr)>> *>(curr))->get_as_tuple(entt)...); }, it.pools);
     }
 
     [[nodiscard]] pointer operator->() const noexcept {

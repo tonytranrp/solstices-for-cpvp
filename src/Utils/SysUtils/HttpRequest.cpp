@@ -5,6 +5,7 @@
 #include "HttpRequest.hpp"
 #include <functional>
 #include <string>
+#include <Utils/Concurrency/TaskSystem.hpp>
 #include <wininet.h>
 
 void HttpRequest::sendAsync()
@@ -18,7 +19,7 @@ void HttpRequest::sendAsync()
 
     mRequestSent = true;
 
-    mFuture = std::async(std::launch::async, [this]()
+    mFuture = TaskSystem::enqueue([this]()
     {
         // Send da request
         HINTERNET hInternet = InternetOpenA(mUserAgent.c_str(), INTERNET_OPEN_TYPE_DIRECT, nullptr, nullptr, 0);

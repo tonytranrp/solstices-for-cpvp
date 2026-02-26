@@ -15,4 +15,5 @@ public:
     // symbol: void ItemRenderer::render(ItemRenderer* _this, BaseActorRenderContext* renderContext, ActorRenderData* actorRenderData)
     static void render(class ItemRenderer* _this, class BaseActorRenderContext* renderContext, struct ActorRenderData* actorRenderData);
     void init() override;
+    void shutdown() override;
 };

@@ -96,3 +96,15 @@ void MouseHook::init()
 {
     mDetour = std::make_unique<Detour>("MouseDevice::feed", reinterpret_cast<void*>(SigManager::MouseDevice_feed), &MouseHook::onMouse);
 }
+
+void MouseHook::shutdown()
+{
+    if (mDetour)
+    {
+        mDetour->restore();
+        mDetour.reset();
+    }
+
+    mButtonStates.clear();
+    thisMouse = nullptr;
+}

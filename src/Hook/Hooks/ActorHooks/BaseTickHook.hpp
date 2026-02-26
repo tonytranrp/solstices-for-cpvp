@@ -35,6 +35,7 @@ public:
 
     static void onBaseTick(class Actor* actor);
     void init() override;
+    void shutdown() override;
 
     static inline std::vector<std::string> mQueuedMessages;
     static inline std::mutex mQueueMutex;

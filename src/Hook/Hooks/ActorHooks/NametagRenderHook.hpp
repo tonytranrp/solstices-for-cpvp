@@ -26,6 +26,7 @@ public:
 
     static void* render(void* a1, void* a2, void* a3, void* a4, class Actor* actor, void* a6, glm::vec3* pos, bool unknown, float deltaThing, mce::Color* color);
     void init() override;
+    void shutdown() override;
 };
 /*#include <Features/Modules/Misc/PacketMine.hpp>
 

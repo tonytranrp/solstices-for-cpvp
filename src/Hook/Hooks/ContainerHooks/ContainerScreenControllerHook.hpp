@@ -16,5 +16,6 @@ public:
 
     static uint32_t onContainerTick(class ContainerScreenController *csc);
     void init() override;
+    void shutdown() override;
 };
 

@@ -100,7 +100,24 @@ void RakPeerHooks::init()
 
 void RakPeerHooks::shutdown()
 {
-    RunUpdateCycleDetour->restore();
-    GetLastPingDetour->restore();
-    SendImmediateDetour->restore();
+    if (RunUpdateCycleDetour)
+    {
+        RunUpdateCycleDetour->restore();
+        RunUpdateCycleDetour.reset();
+    }
+
+    if (GetLastPingDetour)
+    {
+        GetLastPingDetour->restore();
+        GetLastPingDetour.reset();
+    }
+
+    if (SendImmediateDetour)
+    {
+        SendImmediateDetour->restore();
+        SendImmediateDetour.reset();
+    }
+
+    peer = nullptr;
+    LastPing = 0.0f;
 }

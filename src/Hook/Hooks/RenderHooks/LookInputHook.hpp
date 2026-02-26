@@ -18,4 +18,5 @@ public:
     // symbol: void CameraDirectLookSystemUtil::_handleLookInput(EntityContext&, CameraComponent const&, CameraDirectLookComponent&, Vec2 const&)
     static void _handleLookInput(EntityContext* entityContext, CameraComponent& cameraComponent, CameraDirectLookComponent& cameraDirectLookComponent, glm::vec2 const& vec2);
     void init() override;
+    void shutdown() override;
 };

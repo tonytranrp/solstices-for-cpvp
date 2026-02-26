@@ -3,6 +3,12 @@
 #include <imgui.h>
 #include <string>
 #include <nlohmann/json.hpp>
+#include <algorithm>
+#include <cctype>
+#include <functional>
+#include <ranges>
+#include <unordered_set>
+#include <vector>
 
 //
 // Created by vastrakai on 6/30/2024.
@@ -15,6 +21,8 @@ enum class SettingType
     Enum,
     Color,
     String,
+    List,
+    Button,
 };
 
 class Setting
@@ -35,15 +43,16 @@ public:
     {
     }
 
-    //had to do dis sorry :/
+    // Legacy UI transient state. New ScreenManager ECS state is being introduced,
+    // but these remain for compatibility during migration.
     float sliderEase = 0;
     float boolScale = 0;
     bool isDragging = false;
 
     bool enumExtended = false;
-    bool colourExtended = false; // I am a fucking sigma
+    bool colourExtended = false;
     float enumSlide = 0;
-    float colourSlide = 0; // to lerp it 🤤🤤
+    float colourSlide = 0;
 
     virtual nlohmann::json serialize()
     {
@@ -301,5 +310,227 @@ public:
         mValue[1] = ((val >> 8) & 0xFF) / 255.0f;
         mValue[2] = (val & 0xFF) / 255.0f;
         mValue[3] = ((val >> 24) & 0xFF) / 255.0f;
+    }
+};
+
+class ListSetting : public Setting
+{
+public:
+    std::vector<std::string> mOptions;
+    std::vector<std::string> mSelectedValues;
+    std::function<void(ListSetting&)> mRefreshCallback = nullptr;
+
+    ListSetting(std::string name, std::string description, std::vector<std::string> options = {}, std::vector<std::string> selectedValues = {})
+        : Setting(std::move(name), std::move(description), SettingType::List),
+          mOptions(std::move(options)),
+          mSelectedValues(std::move(selectedValues))
+    {
+        dedupeAndNormalize(mOptions);
+        dedupeAndNormalize(mSelectedValues);
+        pruneSelectionToOptions();
+    }
+
+    [[nodiscard]] bool isSelected(const std::string& value) const
+    {
+        const std::string normalized = normalizeValue(value);
+        return std::ranges::find(mSelectedValues, normalized) != mSelectedValues.end();
+    }
+
+    bool select(const std::string& value, const bool requireExistingOption = true)
+    {
+        const std::string normalized = normalizeValue(value);
+        if (normalized.empty())
+        {
+            return false;
+        }
+
+        if (requireExistingOption && std::ranges::find(mOptions, normalized) == mOptions.end())
+        {
+            return false;
+        }
+
+        if (isSelected(normalized))
+        {
+            return false;
+        }
+
+        mSelectedValues.push_back(normalized);
+        return true;
+    }
+
+    bool deselect(const std::string& value)
+    {
+        const std::string normalized = normalizeValue(value);
+        const auto it = std::ranges::find(mSelectedValues, normalized);
+        if (it == mSelectedValues.end())
+        {
+            return false;
+        }
+
+        mSelectedValues.erase(it);
+        return true;
+    }
+
+    void toggle(const std::string& value)
+    {
+        if (!deselect(value))
+        {
+            select(value);
+        }
+    }
+
+    void clearSelection()
+    {
+        mSelectedValues.clear();
+    }
+
+    void setOptions(std::vector<std::string> options, const bool preserveSelection = true)
+    {
+        dedupeAndNormalize(options);
+        mOptions = std::move(options);
+
+        if (!preserveSelection)
+        {
+            mSelectedValues.clear();
+            return;
+        }
+
+        pruneSelectionToOptions();
+    }
+
+    bool addOption(const std::string& option)
+    {
+        const std::string normalized = normalizeValue(option);
+        if (normalized.empty())
+        {
+            return false;
+        }
+
+        if (std::ranges::find(mOptions, normalized) != mOptions.end())
+        {
+            return false;
+        }
+
+        mOptions.push_back(normalized);
+        std::ranges::sort(mOptions);
+        return true;
+    }
+
+    [[nodiscard]] bool canRefresh() const
+    {
+        return static_cast<bool>(mRefreshCallback);
+    }
+
+    void setRefreshCallback(std::function<void(ListSetting&)> callback)
+    {
+        mRefreshCallback = std::move(callback);
+    }
+
+    void refresh()
+    {
+        if (mRefreshCallback)
+        {
+            mRefreshCallback(*this);
+        }
+    }
+
+    nlohmann::json serialize() override
+    {
+        nlohmann::json j = Setting::serialize();
+        j["listValues"] = mSelectedValues;
+        return j;
+    }
+
+private:
+    static std::string normalizeValue(std::string value)
+    {
+        auto isNotSpace = [](unsigned char ch) { return !std::isspace(ch); };
+
+        const auto begin = std::find_if(value.begin(), value.end(), isNotSpace);
+        const auto end = std::find_if(value.rbegin(), value.rend(), isNotSpace).base();
+        if (begin >= end)
+        {
+            return {};
+        }
+
+        value = std::string(begin, end);
+        std::ranges::transform(value, value.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return value;
+    }
+
+    static void dedupeAndNormalize(std::vector<std::string>& values)
+    {
+        std::vector<std::string> normalizedValues;
+        normalizedValues.reserve(values.size());
+        std::unordered_set<std::string> seen;
+
+        for (const auto& value : values)
+        {
+            std::string normalized = normalizeValue(value);
+            if (normalized.empty())
+            {
+                continue;
+            }
+
+            if (!seen.insert(normalized).second)
+            {
+                continue;
+            }
+
+            normalizedValues.push_back(std::move(normalized));
+        }
+
+        std::ranges::sort(normalizedValues);
+        values = std::move(normalizedValues);
+    }
+
+    void pruneSelectionToOptions()
+    {
+        dedupeAndNormalize(mSelectedValues);
+
+        mSelectedValues.erase(
+            std::remove_if(
+                mSelectedValues.begin(),
+                mSelectedValues.end(),
+                [&](const std::string& selectedValue) {
+                    return std::ranges::find(mOptions, selectedValue) == mOptions.end();
+                }),
+            mSelectedValues.end());
+    }
+};
+
+class ButtonSetting : public Setting
+{
+public:
+    std::string mButtonText;
+    std::function<void()> mOnClick = nullptr;
+
+    ButtonSetting(
+        std::string name,
+        std::string description,
+        std::string buttonText = "Run",
+        std::function<void()> onClick = nullptr)
+        : Setting(std::move(name), std::move(description), SettingType::Button),
+          mButtonText(std::move(buttonText)),
+          mOnClick(std::move(onClick))
+    {
+    }
+
+    void setOnClick(std::function<void()> onClick)
+    {
+        mOnClick = std::move(onClick);
+    }
+
+    [[nodiscard]] bool canClick() const
+    {
+        return static_cast<bool>(mOnClick);
+    }
+
+    void click() const
+    {
+        if (mOnClick)
+        {
+            mOnClick();
+        }
     }
 };

@@ -1,4 +1,4 @@
-//
+﻿//
 // Created by vastrakai on 6/25/2024.
 //
 
@@ -9,37 +9,70 @@
 
 void ChatUtils::displayClientMessage(const std::string& msg)
 {
-    if (!msg.contains("\n"))
-    {// FUCK YOU DONT CHANGE THE PREIX COLOR U NIGGER
-        ClientInstance::get()->getGuiData()->displayClientMessageQueued("§asolstice§7 » §r" + msg);
+    auto* clientInstance = ClientInstance::get();
+    if (!clientInstance)
+    {
         return;
     }
 
-    // Newline handling
-    std::string formattedMsg = "§asolstice§7 » §r";
+    auto* guiData = clientInstance->getGuiData();
+    if (!guiData)
+    {
+        return;
+    }
+
+    if (!msg.contains("\n"))
+    {
+        guiData->displayClientMessageQueued("Â§asolsticeÂ§7 Â» Â§r" + msg);
+        return;
+    }
+
+    std::string formattedMsg = "Â§asolsticeÂ§7 Â» Â§r";
     for (const auto& c : msg)
     {
         if (c == '\n')
         {
-            formattedMsg += "\n§asolstice§7 » §r";
+            formattedMsg += "\nÂ§asolsticeÂ§7 Â» Â§r";
         }
         else
         {
             formattedMsg += c;
         }
     }
-    ClientInstance::get()->getGuiData()->displayClientMessageQueued(formattedMsg);
+
+    guiData->displayClientMessageQueued(formattedMsg);
 }
 
 void ChatUtils::displayClientMessageSub(const std::string& subcaption, const std::string& msg)
 {
-    ClientInstance::get()->getGuiData()->displayClientMessageQueued("§asolstice§7 » §7[" + subcaption + "§7] §r" + msg);
+    auto* clientInstance = ClientInstance::get();
+    if (!clientInstance)
+    {
+        return;
+    }
+
+    auto* guiData = clientInstance->getGuiData();
+    if (!guiData)
+    {
+        return;
+    }
+
+    guiData->displayClientMessageQueued("Â§asolsticeÂ§7 Â» Â§7[" + subcaption + "Â§7] Â§r" + msg);
 }
 
 void ChatUtils::displayClientMessageRaw(const std::string& msg)
 {
-    ClientInstance::get()->getGuiData()->displayClientMessageQueued(msg);
+    auto* clientInstance = ClientInstance::get();
+    if (!clientInstance)
+    {
+        return;
+    }
+
+    auto* guiData = clientInstance->getGuiData();
+    if (!guiData)
+    {
+        return;
+    }
+
+    guiData->displayClientMessageQueued(msg);
 }
-
-
-

@@ -3,6 +3,7 @@
 // Created by vastrakai on 8/16/2024.
 //
 #include <functional>
+#include <future>
 #include <string>
 #include <wininet.h>
 

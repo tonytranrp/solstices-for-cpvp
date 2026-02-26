@@ -4,6 +4,8 @@
 
 #include "SetupAndRenderHook.hpp"
 
+#include <mutex>
+#include <Solstice.hpp>
 #include <SDK/Minecraft/mce.hpp>
 #include <SDK/Minecraft/Actor/Actor.hpp>
 #include <SDK/Minecraft/Rendering/LevelRenderer.hpp>
@@ -39,7 +41,12 @@ void* SetupAndRenderHook::onSetupAndRender(void* screenView, void* mcuirc)
         playerPos = player->getRenderPositionComponent()->mPosition;
     }
 
-    if (D3DHook::FrameTransforms) D3DHook::FrameTransforms->push({ ci->getViewMatrix(), origin, playerPos, ci->getFov() });
+    if (!Solstice::mRequestEject.load(std::memory_order_relaxed) &&
+        D3DHook::AcceptFrameTransforms.load(std::memory_order_relaxed))
+    {
+        std::scoped_lock lock(D3DHook::FrameTransformsMutex);
+        D3DHook::FrameTransforms.push({ ci->getViewMatrix(), origin, playerPos, ci->getFov() });
+    }
 
     return original(screenView, mcuirc);
 }
@@ -66,4 +73,19 @@ void SetupAndRenderHook::initVt(void* ctx)
 void SetupAndRenderHook::init()
 {
     mSetupAndRenderDetour = std::make_unique<Detour>("ScreenView::setupAndRender", reinterpret_cast<void*>(SigManager::ScreenView_setupAndRender), &SetupAndRenderHook::onSetupAndRender);
+}
+
+void SetupAndRenderHook::shutdown()
+{
+    if (mDrawImageDetour)
+    {
+        mDrawImageDetour->restore();
+        mDrawImageDetour.reset();
+    }
+
+    if (mSetupAndRenderDetour)
+    {
+        mSetupAndRenderDetour->restore();
+        mSetupAndRenderDetour.reset();
+    }
 }

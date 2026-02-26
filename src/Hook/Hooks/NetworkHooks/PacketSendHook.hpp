@@ -21,5 +21,6 @@ public:
     static void sendInputPacket(std::shared_ptr<class PlayerAuthInputPacket> packet);
     static void sendPacket(class PlayerAuthInputPacket* packet);
     void init() override;
+    void shutdown() override;
 };
 

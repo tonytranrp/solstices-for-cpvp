@@ -84,14 +84,27 @@ void HookManager::init(bool initLp)
 
 void HookManager::shutdown()
 {
-    for (auto& hook : mHooks)
+    if (mHooks.empty())
     {
-        hook->shutdown();
+        MH_DisableHook(MH_ALL_HOOKS);
+        MH_Uninitialize();
+        return;
     }
 
+    // Stop all MinHook callbacks before individual hook teardown mutates detour state.
     MH_DisableHook(MH_ALL_HOOKS);
-    MH_Uninitialize();
+
+    for (auto it = mHooks.rbegin(); it != mHooks.rend(); ++it)
+    {
+        if (!(*it))
+        {
+            continue;
+        }
+
+        (*it)->shutdown();
+    }
 
     mHooks.clear();
+    MH_Uninitialize();
 }
 

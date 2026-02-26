@@ -15,5 +15,6 @@ public:
 
     static void onKey(uint32_t key, bool isDown);
     void init() override;
+    void shutdown() override;
 };
 

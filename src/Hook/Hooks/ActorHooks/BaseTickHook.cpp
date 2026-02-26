@@ -64,3 +64,16 @@ void BaseTickHook::init()
     mDetour = std::make_unique<Detour>("Actor::baseTick", reinterpret_cast<void*>(ClientInstance::get()->getLocalPlayer()->vtable[OffsetProvider::Actor_baseTick]), &BaseTickHook::onBaseTick);
     mDetour->enable();
 }
+
+void BaseTickHook::shutdown()
+{
+    if (mDetour)
+    {
+        mDetour->restore();
+        mDetour.reset();
+    }
+
+    mQueuedPackets.clear();
+    std::scoped_lock lock(mQueueMutex);
+    mQueuedMessages.clear();
+}

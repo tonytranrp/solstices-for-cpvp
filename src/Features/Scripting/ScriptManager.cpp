@@ -428,9 +428,20 @@ void ScriptManager::shutdown()
 {
     spdlog::info("shutting down ScriptManager");
 
-    lua_close(mGlobalLuaState);
+    mRunning = false;
 
-    gFeatureManager->mDispatcher->deafen<ClientTickEvent, &ScriptManager::onClientTick>(this);
+    if (gFeatureManager && gFeatureManager->mDispatcher)
+    {
+        gFeatureManager->mDispatcher->deafen<ClientTickEvent, &ScriptManager::onClientTick>(this);
+    }
+
+    unloadUserScripts();
+
+    if (mGlobalLuaState)
+    {
+        lua_close(mGlobalLuaState);
+        mGlobalLuaState = nullptr;
+    }
 }
 
 

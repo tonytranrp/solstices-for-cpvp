@@ -1,13 +1,17 @@
 #pragma once
-//
-// Created by vastrakai on 7/7/2024.
-//
+
+#include <cstddef>
+#include <mutex>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include <Features/Modules/Module.hpp>
+#include <SDK/Minecraft/World/Chunk/ChunkSource.hpp>
+#include <Utils/Chunk/ChunkFindingUtils.hpp>
+#include <Utils/Structs.hpp>
 
-
-class BlockESP : public ModuleBase<BlockESP>
-{
+class BlockESP : public ModuleBase<BlockESP> {
 public:
     enum class BlockRenderMode {
         Filled,
@@ -15,78 +19,81 @@ public:
         Both
     };
 
-    EnumSettingT<BlockRenderMode> mRenderMode = EnumSettingT("Render Mode", "The mode to render block", BlockRenderMode::Outline, "Filled", "Outline", "Both");
-    NumberSetting mRadius = NumberSetting("Radius", "The radius of the block esp", 20.f, 1.f, 100.f, 0.01f);
-    NumberSetting mChunkRadius = NumberSetting("Chunk Radius", "The max chunk radius to search for blocks", 4.f, 1.f, 32.f, 1.f);
-    NumberSetting mUpdateFrequency = NumberSetting("Update Frequency", "The frequency of the block update (in ticks)", 1.f, 1.f, 40.f, 0.01f);
-    NumberSetting mChunkUpdatesPerTick = NumberSetting("Chunk Updates Per Tick", "The number of subchunks to update per tick", 5.f, 1.f, 24.f, 1.f);
-    BoolSetting mRenderCurrentChunk = BoolSetting("Render Current Chunk", "Renders the current chunk", false);
-    BoolSetting mEmerald = BoolSetting("Emerald", "Draws around emerald ore", true);
-    BoolSetting mDiamond = BoolSetting("Diamond", "Draws around diamond ore", true);
-    BoolSetting mGold = BoolSetting("Gold", "Draws around gold ore", true);
-    BoolSetting mIron = BoolSetting("Iron", "Draws around iron ore", true);
-    BoolSetting mCoal = BoolSetting("Coal", "Draws around coal ore", true);
-    BoolSetting mRedstone = BoolSetting("Redstone", "Draws around redstone ore", true);
-    BoolSetting mLapis = BoolSetting("Lapis", "Draws around lapis ore", true);
-    BoolSetting mPortal = BoolSetting("Portal", "Draws around portal blocks", true);
-    BoolSetting mChests = BoolSetting("Chests", "Draws around chests", false);
-    BoolSetting mOnlyExposedOres = BoolSetting("Only Exposed Ores", "Show only ores that are exposed to air", false);
+    ListSetting mTrackedBlocks = ListSetting(
+        "Tracked Blocks",
+        "Choose which block names BlockESP should scan and render",
+        {},
+        {}
+    );
+    ButtonSetting mCalibrateDistance = ButtonSetting(
+        "Calibrate Distance",
+        "Detect and apply the furthest safe chunk scan radius around your current direction",
+        "Calibrate");
 
-    BlockESP() : ModuleBase("BlockESP", "Draws a box around selected blocks", ModuleCategory::Visual, 0, false) {
-        addSettings(
-                &mRenderMode,
-            &mRadius,
-            &mChunkRadius,
-            &mUpdateFrequency,
-            &mChunkUpdatesPerTick,
-            &mRenderCurrentChunk,
-            &mDiamond,
-            &mEmerald,
-            &mGold,
-            &mIron,
-            &mCoal,
-            &mRedstone,
-            &mLapis,
-            &mPortal,
-            &mChests,
-            &mOnlyExposedOres
-        );
+    BlockESP();
 
-        mNames = {
-            {Lowercase, "blockesp"},
-            {LowercaseSpaced, "block esp"},
-            {Normal, "BlockESP"},
-            {NormalSpaced, "Block ESP"}
-        };
-    }
-
-    ChunkPos mSearchCenter;
-    ChunkPos mCurrentChunkPos;
-    int mSubChunkIndex = 0;
-    int mDirectionIndex = 0;
-    int mSteps = 1;
-    int mStepsCount = 0;
-    int64_t mSearchStart = 0;
-
-    struct FoundBlock
-    {
-        const Block* block;
+    struct FoundBlock {
+        int blockId = 0;
         AABB aabb;
         ImColor color;
     };
 
-    std::unordered_map<BlockPos, FoundBlock> mFoundBlocks = {};
-
-    void moveToNext();
-    void tryProcessSub(bool& processed, ChunkPos currentChunkPos, int subChunkIndex);
-    bool processSub(ChunkPos processChunk, int subChunk);
-    void reset();
-
     void onEnable() override;
     void onDisable() override;
-    std::vector<int> getEnabledBlocks();
     void onBlockChangedEvent(class BlockChangedEvent& event);
     void onBaseTickEvent(class BaseTickEvent& event);
     void onPacketInEvent(class PacketInEvent& event);
     void onRenderEvent(class RenderEvent& event);
+
+    std::vector<int> getTrackedBlockIds() const;
+    [[nodiscard]] bool isCalibrating() const noexcept;
+    [[nodiscard]] float calibrationProgress() const noexcept;
+    [[nodiscard]] int calibratedScanRadius() const noexcept;
+
+private:
+    using FoundBlockMap = std::unordered_map<BlockPos, FoundBlock>;
+
+    mutable std::mutex mFoundBlocksMutex;
+    FoundBlockMap mFoundBlocks;
+    std::vector<ChunkFindingUtils::FoundBlock> mScanScratch;
+    std::size_t mCommittedScanCount = 0;
+    ChunkFindingUtils::IncrementalScanner mChunkScanner;
+    uint64_t mLastScanRequest = 0;
+    uint64_t mScanStartTime = 0;
+    ChunkPos mLastScanCenter = ChunkPos(0, 0);
+    bool mForceFullScan = true;
+    bool mLoggedEmptyTrackedSet = false;
+    bool mHasCommittedScan = false;
+    bool mCommitIncrementalThisScan = false;
+    int mAdaptiveScanRadiusChunks = 8;
+
+    BlockRenderMode mRenderMode = BlockRenderMode::Outline;
+    bool mRenderScanBounds = true;
+    float mMinimumRenderRadius = 0.f;
+
+    bool mCalibrationActive = false;
+    float mCalibrationProgress = 0.f;
+    int mCalibrationMaxProbeDistance = 96;
+    uint64_t mCalibrationStartTime = 0;
+    int mCalibrationLastProbeDistance = 0;
+
+    ChunkFindingUtils::ScanRadiusCalibrator mScanRadiusCalibrator;
+
+    std::unordered_set<int> mTrackedBlockIdSet;
+    std::unordered_map<std::string, std::vector<int>> mTrackableBlockIdsByName;
+    std::unordered_map<int, std::string> mTrackableBlockNameById;
+
+    void reset();
+    void startCalibration();
+    void updateCalibration();
+    [[nodiscard]] int currentScanRadiusChunks() const noexcept;
+    void refreshTrackedBlocksFromSettings();
+    void rebuildTrackableBlockOptions();
+    bool registerTrackableBlock(const std::string& name, int blockId);
+    bool syncTrackableBlockOptions();
+    void runScanIfNeeded(const ChunkPos& centerChunk);
+    bool isInsideScanRange(const BlockPos& position, const ChunkPos& centerChunk) const;
+    bool isInsideRenderRange(const BlockPos& position, const glm::vec3& playerPos) const;
+
+    static ImColor colorForBlockId(int blockId);
 };

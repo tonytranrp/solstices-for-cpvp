@@ -3,127 +3,169 @@
 //
 
 #include "StackWalker.hpp"
-#define _AMD64_
+
 #include <DbgHelp.h>
+#include <iomanip>
+#include <sstream>
+
 #include <spdlog/spdlog.h>
-#include <Utils/MemUtils.hpp>
-#include <Utils/ProcUtils.hpp>
+
+namespace
+{
+    std::string formatAddress(const DWORD64 address)
+    {
+        std::ostringstream stream;
+        stream << "0x" << std::uppercase << std::hex << std::setw(16) << std::setfill('0') << address;
+        return stream.str();
+    }
+}
 
 StackWalker::StackWalker()
 {
-    // Get the module paths
-    std::vector<std::wstring> modulePaths = ProcUtils::getModulePaths();
+    constexpr DWORD kSymbolOptions =
+        SYMOPT_DEFERRED_LOADS |
+        SYMOPT_LOAD_LINES |
+        SYMOPT_UNDNAME |
+        SYMOPT_FAIL_CRITICAL_ERRORS |
+        SYMOPT_INCLUDE_32BIT_MODULES;
 
-    // Load the symbols for the modules
-    LoadModuleSymbols(modulePaths);
+    SymSetOptions(SymGetOptions() | kSymbolOptions);
 
-    // Initialize the symbol handler
-    SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
     if (!SymInitialize(GetCurrentProcess(), nullptr, TRUE))
     {
-        spdlog::error("Failed to initialize symbol handler");
+        spdlog::error("[crash] SymInitialize failed (error={})", GetLastError());
     }
 }
 
 StackWalker::~StackWalker()
 {
-    // Cleanup the symbol handler
-    UnloadModuleSymbols();
+    SymCleanup(GetCurrentProcess());
 }
 
-// Stored vector of loaded module paths
-static std::vector<std::wstring> gModulePaths;
-
-void StackWalker::LoadModuleSymbols(const std::vector<std::wstring>& modulePaths) {
-    HMODULE mainModule = Solstice::mModule;
-    std::string modulePathStr = MemUtils::getModulePath(mainModule);
-    if (!modulePathStr.empty()) {
-        gModulePaths.emplace_back(modulePathStr.begin(), modulePathStr.end());
-
-        DWORD symOptions = SymGetOptions();
-        symOptions |= SYMOPT_LOAD_LINES;
-        symOptions |= SYMOPT_UNDNAME;
-        SymSetOptions(symOptions);
-
-        DWORD64 result = SymLoadModuleEx(GetCurrentProcess(), Solstice::mModule, modulePathStr.c_str(), nullptr, 0, 0,
-                                         nullptr, 0);
-
-        if (result == 0) {
-            spdlog::error("Failed to load symbols for the main module.");
-        } else {
-            spdlog::info("Loaded symbols for Solstice.dll.");
-        }
-
-
-
-
-    } else {
-        spdlog::error("Could not get module path for the main module.");
-    }
+void StackWalker::LoadModuleSymbols(const std::vector<std::wstring>&)
+{
 }
 
 void StackWalker::UnloadModuleSymbols()
 {
-    SymUnloadModule64(GetCurrentProcess(), SymGetModuleBase64(GetCurrentProcess(), 0));
-    SymCleanup(GetCurrentProcess());
 }
 
+std::vector<std::string> StackWalker::ShowCallstack(HANDLE hThread, PCONTEXT pContext)
+{
+    std::vector<std::string> stackTrace;
 
-std::vector<std::string> StackWalker::ShowCallstack(HANDLE hThread, PCONTEXT pContext) {
-    auto stackTrace = std::vector<std::string>();
-    // Initialize the stack frame
-    STACKFRAME64 stackFrame;
-    memset(&stackFrame, 0, sizeof(STACKFRAME64));
-    stackFrame.AddrPC.Offset = pContext->Rip;
-    stackFrame.AddrPC.Mode = AddrModeFlat;
-    stackFrame.AddrFrame.Offset = pContext->Rbp;
-    stackFrame.AddrFrame.Mode = AddrModeFlat;
-    stackFrame.AddrStack.Offset = pContext->Rsp;
-    stackFrame.AddrStack.Mode = AddrModeFlat;
-
-    // Initialize the context record
-    CONTEXT contextRecord;
-    memset(&contextRecord, 0, sizeof(CONTEXT));
-    contextRecord.ContextFlags = CONTEXT_FULL;
-    RtlCaptureContext(&contextRecord);
-
-    // Initialize the symbol info
-    SYMBOL_INFO* symbolInfo = (SYMBOL_INFO*)malloc(sizeof(SYMBOL_INFO) + MAX_SYM_NAME * sizeof(TCHAR));
-    memset(symbolInfo, 0, sizeof(SYMBOL_INFO) + MAX_SYM_NAME * sizeof(TCHAR));
-    symbolInfo->SizeOfStruct = sizeof(SYMBOL_INFO);
-    symbolInfo->MaxNameLen = MAX_SYM_NAME;
-
-    // Initialize the line info
-    IMAGEHLP_LINE64 lineInfo;
-    memset(&lineInfo, 0, sizeof(IMAGEHLP_LINE64));
-    lineInfo.SizeOfStruct = sizeof(IMAGEHLP_LINE64);
-
-    // Walk the stack
-    while (StackWalk64(IMAGE_FILE_MACHINE_AMD64, GetCurrentProcess(), hThread, &stackFrame, &contextRecord, nullptr, SymFunctionTableAccess64, SymGetModuleBase64, nullptr))
+    if (hThread == nullptr)
     {
-        if (SymFromAddr(GetCurrentProcess(), stackFrame.AddrPC.Offset, nullptr, symbolInfo))
-        {
-            if (SymGetLineFromAddr64(GetCurrentProcess(), stackFrame.AddrPC.Offset, nullptr, &lineInfo))
-            {
-                spdlog::info("{} {} - {}", MemUtils::getMbMemoryString(stackFrame.AddrPC.Offset), symbolInfo->Name, lineInfo.LineNumber);
-                stackTrace.push_back(fmt::format("{} {} - {}", MemUtils::getMbMemoryString(stackFrame.AddrPC.Offset), symbolInfo->Name, lineInfo.LineNumber));
-            }
-            else
-            {
-                spdlog::info("{} {}", MemUtils::getMbMemoryString(stackFrame.AddrPC.Offset), symbolInfo->Name);
-                stackTrace.push_back(fmt::format("{} {}", MemUtils::getMbMemoryString(stackFrame.AddrPC.Offset), symbolInfo->Name));
-            }
-        }
-        else
-        {
-            // If we can't get the symbol name, just show the raw address
-            spdlog::info("{}", MemUtils::getMbMemoryString(stackFrame.AddrPC.Offset));
-            stackTrace.push_back(fmt::format("{}", MemUtils::getMbMemoryString(stackFrame.AddrPC.Offset)));
-        }
+        hThread = GetCurrentThread();
     }
 
-    // Cleanup
-    free(symbolInfo);
+    CONTEXT contextRecord{};
+    if (pContext != nullptr)
+    {
+        contextRecord = *pContext;
+    }
+    else
+    {
+        contextRecord.ContextFlags = CONTEXT_FULL;
+        RtlCaptureContext(&contextRecord);
+    }
+
+    STACKFRAME64 frame{};
+#if defined(_M_X64)
+    constexpr DWORD machineType = IMAGE_FILE_MACHINE_AMD64;
+    frame.AddrPC.Offset = contextRecord.Rip;
+    frame.AddrFrame.Offset = contextRecord.Rbp;
+    frame.AddrStack.Offset = contextRecord.Rsp;
+#elif defined(_M_IX86)
+    constexpr DWORD machineType = IMAGE_FILE_MACHINE_I386;
+    frame.AddrPC.Offset = contextRecord.Eip;
+    frame.AddrFrame.Offset = contextRecord.Ebp;
+    frame.AddrStack.Offset = contextRecord.Esp;
+#else
+    stackTrace.emplace_back("Unsupported architecture for stack walking.");
+    return stackTrace;
+#endif
+
+    frame.AddrPC.Mode = AddrModeFlat;
+    frame.AddrFrame.Mode = AddrModeFlat;
+    frame.AddrStack.Mode = AddrModeFlat;
+
+    HANDLE process = GetCurrentProcess();
+    DWORD64 previousAddress = 0;
+    for (std::size_t frameIndex = 0; frameIndex < 256; ++frameIndex)
+    {
+        const BOOL walked = StackWalk64(
+            machineType,
+            process,
+            hThread,
+            &frame,
+            &contextRecord,
+            nullptr,
+            SymFunctionTableAccess64,
+            SymGetModuleBase64,
+            nullptr);
+
+        if (!walked || frame.AddrPC.Offset == 0 || frame.AddrPC.Offset == previousAddress)
+        {
+            break;
+        }
+        previousAddress = frame.AddrPC.Offset;
+
+        DWORD64 address = frame.AddrPC.Offset;
+        DWORD64 symbolDisplacement = 0;
+        char symbolBuffer[sizeof(SYMBOL_INFO) + MAX_SYM_NAME] = {};
+        auto* symbolInfo = reinterpret_cast<SYMBOL_INFO*>(symbolBuffer);
+        symbolInfo->SizeOfStruct = sizeof(SYMBOL_INFO);
+        symbolInfo->MaxNameLen = MAX_SYM_NAME;
+
+        std::string symbolName = "??";
+        if (SymFromAddr(process, address, &symbolDisplacement, symbolInfo))
+        {
+            symbolName = symbolInfo->Name;
+        }
+
+        IMAGEHLP_MODULE64 moduleInfo{};
+        moduleInfo.SizeOfStruct = sizeof(moduleInfo);
+        std::string moduleName = "unknown";
+        if (SymGetModuleInfo64(process, address, &moduleInfo))
+        {
+            if (moduleInfo.ModuleName[0] != '\0')
+            {
+                moduleName = moduleInfo.ModuleName;
+            }
+            else if (moduleInfo.ImageName != nullptr)
+            {
+                moduleName = moduleInfo.ImageName;
+            }
+        }
+
+        IMAGEHLP_LINE64 lineInfo{};
+        lineInfo.SizeOfStruct = sizeof(lineInfo);
+        DWORD lineDisplacement = 0;
+        const bool hasLine = SymGetLineFromAddr64(process, address, &lineDisplacement, &lineInfo) == TRUE;
+
+        std::ostringstream line;
+        line << "#" << std::setw(2) << std::setfill('0') << frameIndex
+             << " " << formatAddress(address)
+             << " " << moduleName << "!" << symbolName;
+
+        if (symbolDisplacement != 0)
+        {
+            line << "+0x" << std::uppercase << std::hex << symbolDisplacement << std::dec;
+        }
+
+        if (hasLine && lineInfo.FileName != nullptr)
+        {
+            line << " [" << lineInfo.FileName << ":" << lineInfo.LineNumber << "]";
+        }
+
+        stackTrace.emplace_back(line.str());
+    }
+
+    if (stackTrace.empty())
+    {
+        stackTrace.emplace_back("No frames captured.");
+    }
 
     return stackTrace;
 }

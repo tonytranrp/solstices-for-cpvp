@@ -21,6 +21,7 @@ public:
 
     static void render(ActorRenderDispatcher* _this, class BaseActorRenderContext* entityRenderContext, Actor* entity, glm::vec3* cameraTargetPos, glm::vec3* pos, glm::vec2* rot, bool ignoreLighting);
     void init() override;
+    void shutdown() override;
 };
 
 

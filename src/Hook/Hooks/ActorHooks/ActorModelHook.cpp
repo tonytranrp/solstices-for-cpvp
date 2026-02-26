@@ -36,3 +36,12 @@ void ActorModelHook::init()
 {
     mDetour = std::make_unique<Detour>("ActorAnimationControllerPlayer::applyToPose", reinterpret_cast<void*>(SigManager::ActorAnimationControllerPlayer_applyToPose), &ActorModelHook::onActorModel);
 }
+
+void ActorModelHook::shutdown()
+{
+    if (mDetour)
+    {
+        mDetour->restore();
+        mDetour.reset();
+    }
+}

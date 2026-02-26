@@ -28,4 +28,5 @@ public:
     //void __fastcall mce::framebuilder::RenderItemInHandDescription::RenderItemInHandDescription( mce::framebuilder::RenderItemInHandDescription *this, const ItemRenderCall *renderObject, ItemContextFlags *itemFlags, const mce::MaterialPtr *material, const mce::ServerTexture *glintTexture, const glm::tmat4x4<float,0> *worldMatrix, bool isDrawingUI, const mce::GlobalConstantBuffers *globalConstantBuffers, unsigned __int16 viewId, const dragon::RenderMetadata *renderMetadata)
     static void* RenderItemInHandDescriptionCtor(RenderItemInHandDescription* _this, void* renderObject, void* itemFlags, void* material, void* glintTexture, void* worldMatrix, bool isDrawingUI, void* globalConstantBuffers, unsigned __int16 viewId, void* renderMetadata);
     void init() override;
+    void shutdown() override;
 };

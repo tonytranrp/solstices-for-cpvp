@@ -57,6 +57,9 @@ public:
     [[nodiscard]] virtual const char* getTypeID() const = 0;
 
     std::string& getName();
+    void setKeybind(int key);
+    [[nodiscard]] std::string getKeybindName() const;
+    [[nodiscard]] bool hasKeybind() const;
 
     void setEnabled(bool enabled);
     void toggle();

@@ -272,7 +272,7 @@ bool D3DHook::createTextureFromData(const uint8_t* data, int width, int height, 
 
 HRESULT D3DHook::present(IDXGISwapChain3* swapChain, UINT syncInterval, UINT flags)
 {
-    if (Solstice::mRequestEject)
+    if (Solstice::mRequestEject.load())
     {
         return oPresent(swapChain, syncInterval, flags);
     }
@@ -356,15 +356,14 @@ HRESULT D3DHook::present(IDXGISwapChain3* swapChain, UINT syncInterval, UINT fla
         return oPresent(swapChain, syncInterval, flags);
     }
 
-    if (FrameTransforms)
-        while(FrameTransforms->size() > transformDelay)
-        {
-            RenderUtils::transform = FrameTransforms->front();
-            FrameTransforms->pop();
-        }
-    else
+    if (AcceptFrameTransforms.load(std::memory_order_relaxed))
     {
-        spdlog::error("FrameTransforms is null");
+        std::scoped_lock lock(FrameTransformsMutex);
+        while (FrameTransforms.size() > static_cast<size_t>(transformDelay))
+        {
+            RenderUtils::transform = FrameTransforms.front();
+            FrameTransforms.pop();
+        }
     }
 
     int count = alreadyRunningD3D11 ? 1 : BUFFER_COUNT;
@@ -554,6 +553,8 @@ void D3DHook::init()
 void D3DHook::s_init()
 {
     Solstice::console->info("Initializing D3DHook");
+    AcceptFrameTransforms.store(true, std::memory_order_relaxed);
+
     // Attempt to init on D3D12
     if (kiero::init(kiero::RenderType::D3D12) == kiero::Status::Success)
     {
@@ -581,7 +582,13 @@ void D3DHook::shutdown()
 void D3DHook::s_shutdown()
 {
     Solstice::console->info("Shutting down D3DHook");
-    FrameTransforms.reset();
+    AcceptFrameTransforms.store(false, std::memory_order_relaxed);
+    {
+        std::scoped_lock lock(FrameTransformsMutex);
+        std::queue<FrameTransform> empty;
+        std::swap(FrameTransforms, empty);
+    }
+
     kiero::unbind(8);
     kiero::unbind(13);
     kiero::unbind(140);
@@ -592,7 +599,10 @@ void D3DHook::s_shutdown()
 
     mBackBuffer11Rtv.clear();
     mBackBuffer11Tex.clear();
-    gContext11->Flush();
+    if (gContext11)
+    {
+        gContext11->Flush();
+    }
 
     alreadyRunningD3D11 = false;
     d3dInitImGui = false;

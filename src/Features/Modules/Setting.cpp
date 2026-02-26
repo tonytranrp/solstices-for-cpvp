@@ -3,6 +3,7 @@
 //
 
 #include "Setting.hpp"
+#include <sstream>
 
 bool Setting::parse(const std::string& value)
 {
@@ -63,6 +64,32 @@ bool Setting::parse(const std::string& value)
         {
             return false;
         }
+    }
+    if (mType == SettingType::List)
+    {
+        auto* listSetting = reinterpret_cast<ListSetting*>(this);
+        listSetting->clearSelection();
+
+        std::stringstream ss(value);
+        std::string token;
+        bool parsedAny = false;
+        bool selectedAny = false;
+        while (std::getline(ss, token, ','))
+        {
+            parsedAny = true;
+            selectedAny = listSetting->select(token) || selectedAny;
+        }
+
+        if (!parsedAny)
+        {
+            return listSetting->select(value);
+        }
+
+        return selectedAny;
+    }
+    if (mType == SettingType::Button)
+    {
+        return false;
     }
     return false;
 }

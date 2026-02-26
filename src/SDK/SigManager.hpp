@@ -4,7 +4,8 @@
 //
 
 #include <cstdint>
-#include <future>
+#include <atomic>
+#include <mutex>
 #include <include/libhat/include/libhat.hpp>
 #include <include/libhat/include/libhat/Scanner.hpp>
 #include <include/libhat/include/libhat/Signature.hpp>
@@ -36,7 +37,8 @@ class SigManager {
     static hat::scan_result scanSig(hat::signature_view sig, const std::string& name, int offset = 0);
 
     static inline std::vector<std::function<void()>> mSigInitializers;
-    static inline int mSigScanCount;
+    static inline std::atomic<int> mSigScanCount = 0;
+    static inline std::mutex mSigMutex;
 public:
     static inline bool mIsInitialized = false;
     static inline std::unordered_map<std::string, uintptr_t> mSigs;

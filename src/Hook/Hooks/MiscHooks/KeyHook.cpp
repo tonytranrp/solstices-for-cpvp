@@ -126,99 +126,99 @@ void KeyHook::onKey(uint32_t key, bool isDown)
 {
     auto oFunc = mDetour->getOriginal<&onKey>();
 
-    if (key == VK_END && isDown && ClientInstance::get()->getScreenName() != "chat_screen" && !ImGui::GetIO().WantCaptureKeyboard && !ImGui::GetIO().WantTextInput)
-    {
-        Solstice::mRequestEject = true;
-    }
-
     Keyboard::mPressedKeys[key] = isDown;
 
-    auto holder = nes::make_holder<KeyEvent>(key, isDown);
-    if (!gFeatureManager)
+    bool imguiWantsKeyboard = false;
+    if (ImGui::GetCurrentContext())
     {
-        spdlog::critical("FeatureManager is null");
-    }
-    if (!gFeatureManager->mDispatcher)
-    {
-        spdlog::critical("Dispatcher is null");
-    }
+        ImGuiIO& io = ImGui::GetIO();
 
-    gFeatureManager->mDispatcher->trigger<KeyEvent>(holder);
-
-    if (holder->mCancelled) return;
-
-    if (!ImGui::GetCurrentContext()) return;
-    ImGuiIO& io = ImGui::GetIO();
-
-    ImGuiKey imKey = ImGui_ImplWin32_VirtualKeyToImGuiKey(key);
-    io.AddKeyEvent(imKey, isDown);
-    if (isDown)
-    {
-        HKL layout = GetKeyboardLayout(0);
-        int scanCode = MapVirtualKeyA(key, MAPVK_VK_TO_VSC);
-        BYTE translation[2];
-        BYTE keyState[256] = { 0 };
-        GetKeyboardState(keyState);
-        int result = ToAscii(key, scanCode, keyState, (LPWORD)translation, 0);
-
-        if (result == 1) {
-            // If a single character is returned, return it
-            char c = static_cast<char>(translation[0]);
-            io.AddInputCharacter(c);
+        ImGuiKey imKey = ImGui_ImplWin32_VirtualKeyToImGuiKey(key);
+        if (imKey != ImGuiKey_None)
+        {
+            io.AddKeyEvent(imKey, isDown);
         }
-        else if (result == 2) {
-            // If a dead key or a special character is returned, return the second character in the buffer
-            char sc = static_cast<char>(translation[1]);
-            io.AddInputCharacter(sc);
+
+        if (isDown)
+        {
+            const int scanCode = MapVirtualKeyA(key, MAPVK_VK_TO_VSC);
+            BYTE translation[2];
+            BYTE keyState[256] = { 0 };
+            GetKeyboardState(keyState);
+            const int result = ToAscii(key, scanCode, keyState, reinterpret_cast<LPWORD>(translation), 0);
+
+            if (result == 1)
+            {
+                io.AddInputCharacter(static_cast<char>(translation[0]));
+            }
+            else if (result == 2)
+            {
+                io.AddInputCharacter(static_cast<char>(translation[1]));
+            }
+        }
+
+        imguiWantsKeyboard = io.WantCaptureKeyboard || io.WantTextInput;
+    }
+
+    bool keyEventCancelled = false;
+    if (gFeatureManager && gFeatureManager->mDispatcher)
+    {
+        auto holder = nes::make_holder<KeyEvent>(key, isDown);
+        gFeatureManager->mDispatcher->trigger<KeyEvent>(holder);
+        keyEventCancelled = holder->mCancelled;
+    }
+    else
+    {
+        if (!gFeatureManager)
+        {
+            spdlog::critical("FeatureManager is null");
+        }
+        else if (!gFeatureManager->mDispatcher)
+        {
+            spdlog::critical("Dispatcher is null");
         }
     }
 
-    // Return and don't call oFunc if ImGui wants to capture keyboard or text input
-    if (io.WantCaptureKeyboard || io.WantTextInput)
+    auto* clientInstance = ClientInstance::get();
+    bool clickGuiEnabled = false;
+    if (gFeatureManager && gFeatureManager->mModuleManager)
+    {
+        if (const auto* clickGui = gFeatureManager->mModuleManager->getModule<ClickGui>())
+        {
+            clickGuiEnabled = clickGui->mEnabled;
+        }
+    }
+
+    const bool isChatOpen = clientInstance && clientInstance->getScreenName() == "chat_screen";
+    if (key == VK_END && isDown && !isChatOpen && !imguiWantsKeyboard && !clickGuiEnabled)
+    {
+        Solstice::mRequestEject.store(true);
+    }
+
+    const bool shouldBlockGameInput = keyEventCancelled || (isDown && imguiWantsKeyboard) || (clickGuiEnabled && isDown);
+    if (shouldBlockGameInput)
     {
         return;
     }
 
     oFunc(key, isDown);
 
-    // Look for modules
-    const auto* clickGui = gFeatureManager->mModuleManager->getModule<ClickGui>();
-
-    for (auto& module : gFeatureManager->mModuleManager->getModules())
+    if (gFeatureManager && gFeatureManager->mModuleManager)
     {
-        if (ClientInstance::get()->getMouseGrabbed() && module.get() != clickGui) continue;
-        if (ClientInstance::get()->getScreenName() == "chat_screen") continue;
-
-        if (module->mKey == key)
-        {
-            if (module->mEnableWhileHeld)
-            {
-                module->mWantedState = isDown;
-            }
-            else if (isDown)
-            {
-                module->toggle();
-            }
-        }
-
-        /*if (isDown)
-        {
-            for (Setting* setting : module->mSettings)
-            {
-                if (auto boolSetting = dynamic_cast<BoolSetting*>(setting))
-                {
-                    if (boolSetting->mKey == key)
-                    {
-                        bool oldValue = static_cast<bool>(*boolSetting);
-                        boolSetting->setValue(!oldValue);
-                    }
-                }
-            }
-        }*/
+        gFeatureManager->mModuleManager->handleModuleKeybinds(key, isDown);
     }
 }
 
 void KeyHook::init()
 {
     mDetour = std::make_unique<Detour>("Keyboard::feed", reinterpret_cast<void*>(SigManager::Keyboard_feed), &KeyHook::onKey);
+}
+
+void KeyHook::shutdown()
+{
+    if (mDetour)
+    {
+        mDetour->restore();
+        mDetour.reset();
+    }
 }

@@ -7,7 +7,7 @@
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.Foundation.h>
 #include <spdlog/spdlog.h>
-#include <thread>
+#include <Utils/Concurrency/TaskSystem.hpp>
 
 using namespace winrt;
 using namespace Windows::Networking;
@@ -75,8 +75,8 @@ void VoiceChat::onInit()
     /*// Create a client to connect to the server
     client = std::make_unique<VoiceClient>("127.0.0.1", 1845);
 
-    // Start the async connection in a new thread
-    std::thread([&]() {
+    // Start the async connection using the global task system
+    TaskSystem::enqueue([&]() {
         client->connectToServer();  // Connect to the server
         // Wait for the connection to be established
         std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -86,5 +86,5 @@ void VoiceChat::onInit()
         AudioUtils::recordVoiceClip([&](const std::vector<BYTE>& audioBuffer) {
             client->sendAudioDataAsync(audioBuffer).get(); // Send audio data asynchronously
         });
-    }).detach();  // Detach the thread to allow continuous recording and sending*/
+    });*/
 }

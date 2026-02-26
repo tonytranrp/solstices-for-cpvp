@@ -22,3 +22,12 @@ void FireBlockChangedHook::init()
 {
     mDetour = std::make_unique<Detour>("BlockSource::fireBlockChanged", reinterpret_cast<void*>(SigManager::BlockSource_fireBlockChanged), &fireBlockChangedCallback);
 }
+
+void FireBlockChangedHook::shutdown()
+{
+    if (mDetour)
+    {
+        mDetour->restore();
+        mDetour.reset();
+    }
+}

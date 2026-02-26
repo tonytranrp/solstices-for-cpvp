@@ -37,13 +37,7 @@ void IRC::onEnable()
 
 void IRC::onDisable()
 {
-    auto player = ClientInstance::get()->getLocalPlayer();
-    bool isConnected = IrcManager::mClient && IrcManager::mClient->mConnectionState == ConnectionState::Connected;
-    // if we're not in game AND not connected, don't deinit
-    if (!player && !isConnected) return;
-
     IrcManager::deinit();
-
 }
 
 void IRC::onModuleStateChangeEvent(ModuleStateChangeEvent& event)

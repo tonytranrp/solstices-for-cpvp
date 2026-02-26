@@ -18,5 +18,6 @@ public:
     // symbol: void BlockSource::fireBlockChanged(class BlockPos const &,unsigned int,class Block const &,class Block const &,int,enum BlockChangedEventTarget,struct ActorBlockSyncMessage const *,class Actor *)
     static void fireBlockChangedCallback(BlockSource* self, BlockPos& blockPos, uint32_t param_2, Block* newBlock, Block* oldBlock, int param_5, int eventTarget, class ActorBlockSyncMessage* param_7, Actor* who);
     void init() override;
+    void shutdown() override;
 };
 

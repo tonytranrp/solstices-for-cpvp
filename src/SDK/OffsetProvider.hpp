@@ -1,4 +1,6 @@
 #pragma once
+#include <atomic>
+#include <mutex>
 #include <Utils/SysUtils/xorstr.hpp>
 //
 // Created by vastrakai on 6/25/2024.
@@ -50,14 +52,14 @@ public:
 public: \
 static constexpr inline int (name) = offset;
 
-#include <future>
 #include <libhat/Scanner.hpp>
 
 class OffsetProvider {
     static hat::scan_result scanSig(hat::signature_view sig, const std::string& name, int offset = 0);
 
     static inline std::vector<std::function<void()>> mSigInitializers;
-    static inline int mSigScanCount;
+    static inline std::atomic<int> mSigScanCount = 0;
+    static inline std::mutex mSigMutex;
 public:
     static inline bool mIsInitialized = false;
     static inline std::unordered_map<std::string, uintptr_t> mSigs;

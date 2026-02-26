@@ -7,27 +7,31 @@
 #include <iostream>
 #include <Solstice.hpp>
 #include <Utils/Logger.hpp>
+#include <Utils/Concurrency/TaskSystem.hpp>
 #include <Utils/MemUtils.hpp>
 #include <chrono>
-#include <omp.h>
 #include <libhat.hpp>
 
 #define NOW std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count()
 
 hat::scan_result SigManager::scanSig(hat::signature_view sig, const std::string& name, int offset)
 {
-    mSigScanCount++;
+    mSigScanCount.fetch_add(1, std::memory_order_relaxed);
 
     auto minecraft = hat::process::get_process_module();
     auto result = hat::find_pattern(sig, ".text", minecraft);
 
     if (!result.has_result()) {
+        std::lock_guard<std::mutex> lock(mSigMutex);
         mSigs[name] = 0;
         return {};
     }
 
-    if (offset == 0) mSigs[name] = reinterpret_cast<uintptr_t>(result.get());
-    else mSigs[name] = reinterpret_cast<uintptr_t>(result.rel(offset));
+    {
+        std::lock_guard<std::mutex> lock(mSigMutex);
+        if (offset == 0) mSigs[name] = reinterpret_cast<uintptr_t>(result.get());
+        else mSigs[name] = reinterpret_cast<uintptr_t>(result.rel(offset));
+    }
 
     return result;
 }
@@ -35,10 +39,9 @@ hat::scan_result SigManager::scanSig(hat::signature_view sig, const std::string&
 void SigManager::initialize()
 {
     int64_t start = NOW;
-    #pragma omp parallel for
-    for (int i = 0; i < mSigInitializers.size(); i++) {
+    TaskSystem::parallelForIndex<size_t>(0, mSigInitializers.size(), [](size_t i) {
         mSigInitializers[i]();
-    }
+    });
     int64_t end = NOW;
     int64_t diff = end - start;
 
@@ -73,7 +76,7 @@ void SigManager::initialize()
     }
 #endif
 
-    Solstice::console->info("[signatures] initialized in {}ms, {} total sigs scanned", diff, mSigScanCount);
+    Solstice::console->info("[signatures] initialized in {}ms, {} total sigs scanned", diff, mSigScanCount.load(std::memory_order_relaxed));
     mIsInitialized = true;
 }
 
@@ -82,6 +85,7 @@ void SigManager::deinitialize()
     spdlog::info("[signatures] deinitializing...");
     mSigInitializers.clear();
     mSigs.clear();
+    mSigScanCount.store(0, std::memory_order_relaxed);
 
     mIsInitialized = false;
 }

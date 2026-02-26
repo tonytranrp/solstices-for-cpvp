@@ -31,7 +31,10 @@
 #include <Features/Modules/Misc/IRC.hpp>
 #include <SDK/Minecraft/Rendering/GuiData.hpp>
 #include <Utils/OAuthUtils.hpp>
+#include <Utils/Concurrency/TaskSystem.hpp>
 #include <Utils/SysUtils/xorstr.hpp>
+#include <cstdint>
+#include <cstring>
 
 #include <wininet.h>
 #pragma comment(lib, "wininet.lib")
@@ -56,17 +59,122 @@ void setTitle(std::string title)
 std::vector<unsigned char> gBpBytes = {0x1c}; // Defines the new offset for mInHandSlot
 DEFINE_PATCH_FUNC(patchInHandSlot, SigManager::ItemInHandRenderer_renderItem_bytepatch2+2, gBpBytes);
 
-// called using winrt::Windows::ApplicationModel::Core::CoreApplication::MainView().CoreWindow().Dispatcher().RunAsync(winrt::Windows::UI::Core::CoreDispatcherPriority::Normal, [&]()
-void Solstice::init(HMODULE hModule)
+namespace
+{
+    struct DelayedFreeContext
+    {
+        HMODULE mModule;
+        void* mFreeLibrary;
+        void* mSleep;
+        uint32_t mDelayMs;
+        uint32_t mAttempts;
+        void* mExitThread;
+    };
+
+    bool scheduleDelayedModuleFree(HMODULE module)
+    {
+        auto* kernel32 = GetModuleHandleW(L"kernel32.dll");
+        if (!kernel32 || !module)
+        {
+            return false;
+        }
+
+        auto* freeLibrary = GetProcAddress(kernel32, "FreeLibrary");
+        auto* sleepFn = GetProcAddress(kernel32, "Sleep");
+        auto* exitThreadFn = GetProcAddress(kernel32, "ExitThread");
+        if (!freeLibrary || !sleepFn || !exitThreadFn)
+        {
+            return false;
+        }
+
+        auto* context = static_cast<DelayedFreeContext*>(VirtualAlloc(nullptr, sizeof(DelayedFreeContext), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        auto* code = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+        if (!context || !code)
+        {
+            if (context)
+            {
+                VirtualFree(context, 0, MEM_RELEASE);
+            }
+
+            if (code)
+            {
+                VirtualFree(code, 0, MEM_RELEASE);
+            }
+
+            return false;
+        }
+
+        context->mModule = module;
+        context->mFreeLibrary = reinterpret_cast<void*>(freeLibrary);
+        context->mSleep = reinterpret_cast<void*>(sleepFn);
+        context->mDelayMs = 250;
+        context->mAttempts = 128;
+        context->mExitThread = reinterpret_cast<void*>(exitThreadFn);
+
+        // x64 shellcode:
+        // sub rsp, 0x28
+        // mov rbx, rcx
+        // mov ecx, [rbx+0x18] ; delay
+        // mov rax, [rbx+0x10] ; Sleep
+        // call rax
+        // mov r8d, [rbx+0x1C] ; attempts
+        // test r8d, r8d
+        // je exit
+        // loop:
+        // mov rcx, [rbx]      ; module
+        // mov rax, [rbx+0x08] ; FreeLibrary
+        // call rax
+        // dec r8d
+        // jne loop
+        // exit:
+        // xor ecx, ecx
+        // mov rax, [rbx+0x20] ; ExitThread
+        // call rax
+        // add rsp, 0x28
+        // ret
+        static constexpr std::uint8_t shellcode[] = {
+            0x48, 0x83, 0xEC, 0x28,
+            0x48, 0x89, 0xCB,
+            0x8B, 0x4B, 0x18,
+            0x48, 0x8B, 0x43, 0x10,
+            0xFF, 0xD0,
+            0x44, 0x8B, 0x43, 0x1C,
+            0x45, 0x85, 0xC0,
+            0x74, 0x0E,
+            0x48, 0x8B, 0x0B,
+            0x48, 0x8B, 0x43, 0x08,
+            0xFF, 0xD0,
+            0x41, 0xFF, 0xC8,
+            0x75, 0xF2,
+            0x31, 0xC9,
+            0x48, 0x8B, 0x43, 0x20,
+            0xFF, 0xD0,
+            0x48, 0x83, 0xC4, 0x28,
+            0xC3
+        };
+
+        std::memcpy(code, shellcode, sizeof(shellcode));
+
+        HANDLE worker = CreateThread(nullptr, 0, reinterpret_cast<LPTHREAD_START_ROUTINE>(code), context, 0, nullptr);
+        if (worker)
+        {
+            CloseHandle(worker);
+            return true;
+        }
+
+        VirtualFree(context, 0, MEM_RELEASE);
+        VirtualFree(code, 0, MEM_RELEASE);
+        return false;
+    }
+}
+
+void Solstice::initPipeline(HMODULE hModule)
 {
     // Not doing this could cause crashes if you inject too soon
     // Honestly, I don't think this helps much but it's not a bad idea to have it here
     while (ProcUtils::getModuleCount() < 130) std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
     int64_t start = NOW;
-
-    mModule = hModule;
-    mInitialized = true;
 
 #ifdef __DEBUG__
     Logger::initialize();
@@ -235,8 +343,21 @@ void Solstice::init(HMODULE hModule)
     console->info("Press END to eject dll.");
     mLastTick = NOW;
 
-    mThread = std::thread(&Solstice::shutdownThread);
-    mThread.detach();
+    std::thread(&Solstice::shutdownThread).detach();
+}
+
+// called using winrt::Windows::ApplicationModel::Core::CoreApplication::MainView().CoreWindow().Dispatcher().RunAsync(winrt::Windows::UI::Core::CoreDispatcherPriority::Normal, [&]()
+void Solstice::init(HMODULE hModule)
+{
+    if (mInitialized.exchange(true)) {
+        return;
+    }
+
+    mModule = hModule;
+
+    std::thread([hModule]() {
+        Solstice::initPipeline(hModule);
+    }).detach();
 }
 
 #include <Windows.h> // Needed for GetAsyncKeyState
@@ -245,17 +366,17 @@ void Solstice::shutdownThread() {
     // This thread runs until mRequestEject is true.
     bool firstCall = true;
     bool isLpValid = false;
-    while (!mRequestEject) {
+    while (!mRequestEject.load(std::memory_order_relaxed)) {
         // --- Hotkey detection ---
         // Check if CTRL+L is pressed:
         if ((GetAsyncKeyState(VK_CONTROL) & 0x8000) && (GetAsyncKeyState('L') & 0x8000)) {
             console->info("CTRL+L detected: initiating shutdown.");
-            mRequestEject = true;
+            mRequestEject.store(true, std::memory_order_relaxed);
         }
         // Alternatively, check if the END key is pressed:B
         if (GetAsyncKeyState(VK_END) & 0x8000) {
             console->info("END key detected: initiating shutdown.");
-            mRequestEject = true;
+            mRequestEject.store(true, std::memory_order_relaxed);
         }
         // -----------------------
 
@@ -292,9 +413,14 @@ void Solstice::shutdownThread() {
             isLpValid = true;
             HookManager::init(true); // Initialize the base tick hook
 
-            auto ircModule = gFeatureManager->mModuleManager->getModule<IRC>();
-            if (ircModule && !ircModule->mEnabled)
-                ircModule->toggle();
+            if (gFeatureManager && gFeatureManager->mModuleManager)
+            {
+                auto ircModule = gFeatureManager->mModuleManager->getModule<IRC>();
+                if (ircModule && !ircModule->mEnabled)
+                {
+                    ircModule->toggle();
+                }
+            }
 
             if (!Prefs->mDefaultConfigName.empty()) {
                 if (ConfigManager::configExists(Prefs->mDefaultConfigName)) {
@@ -315,7 +441,10 @@ void Solstice::shutdownThread() {
         // Update our patch/hook status and tick the module manager.
         patchInHandSlot(ClientInstance::get()->getLocalPlayer() != nullptr);
         mLastTick = NOW;
-        gFeatureManager->mModuleManager->onClientTick();
+        if (gFeatureManager && gFeatureManager->mModuleManager)
+        {
+            gFeatureManager->mModuleManager->onClientTick();
+        }
 
         // Sleep briefly to reduce CPU usage.
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -324,26 +453,35 @@ void Solstice::shutdownThread() {
     // --- Shutdown procedure begins here ---
 
     // Mark as requested and update the window title.
-    mRequestEject = true;
+    mRequestEject.store(true, std::memory_order_relaxed);
     setTitle("");
     patchInHandSlot(false);
 
     // Shutdown hooks, modules, etc.
     HookManager::shutdown();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    gFeatureManager->shutdown();
-
     console->warn("Shutting down...");
-    ClientInstance::get()->getMinecraftGame()->playUi("beacon.deactivate", 1, 1.0f);
-    ClientInstance::get()->getGuiData()->displayClientMessage("§asolstice§7 » §cEjected!");
 
-    mInitialized = false;
+    if (gFeatureManager)
+    {
+        gFeatureManager->shutdown();
+        gFeatureManager.reset();
+    }
+
+    mInitialized.store(false, std::memory_order_relaxed);
     SigManager::deinitialize();
     OffsetProvider::deinitialize();
-
-    // Pause briefly to allow the user to read any final messages.
-    Sleep(1000);
-
+    TaskSystem::shutdown();
     Logger::deinitialize();
-    FreeLibrary(mModule);
+
+    // Never sleep in this thread after scheduling delayed frees; that can unload the DLL
+    // while this thread is still executing code from it.
+    if (scheduleDelayedModuleFree(mModule))
+    {
+        ExitThread(0);
+    }
+
+    FreeLibraryAndExitThread(mModule, 0);
 }
+
+

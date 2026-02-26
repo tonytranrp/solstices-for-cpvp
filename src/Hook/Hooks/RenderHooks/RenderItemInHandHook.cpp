@@ -27,3 +27,12 @@ void RenderItemInHandHook::init()
         reinterpret_cast<void*>(SigManager::mce_framebuilder_RenderItemInHandDescription_ctor), &RenderItemInHandDescriptionCtor);
     mDetour->enable();
 }
+
+void RenderItemInHandHook::shutdown()
+{
+    if (mDetour)
+    {
+        mDetour->restore();
+        mDetour.reset();
+    }
+}

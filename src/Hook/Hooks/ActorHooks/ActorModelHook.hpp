@@ -16,5 +16,6 @@ public:
     // symbol: void ActorAnimationControllerPlayer::applyToPose(RenderParams&, std::unordered_map<SkeletalHierarchyIndex,std::vector<BoneOrientation>>&, float)
     static void onActorModel(uintptr_t a1, uintptr_t a2, uintptr_t a3, float a4, int a5);
     void init() override;
+    void shutdown() override;
 };
 

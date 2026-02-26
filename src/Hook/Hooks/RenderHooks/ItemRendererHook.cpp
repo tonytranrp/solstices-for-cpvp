@@ -21,3 +21,12 @@ void ItemRendererHook::render(ItemRenderer *_this, BaseActorRenderContext *rende
 void ItemRendererHook::init() {
     mDetour = std::make_unique<Detour>("ItemRenderer::render", reinterpret_cast<void*>(SigManager::ItemRenderer_render), &render);
 }
+
+void ItemRendererHook::shutdown()
+{
+    if (mDetour)
+    {
+        mDetour->restore();
+        mDetour.reset();
+    }
+}

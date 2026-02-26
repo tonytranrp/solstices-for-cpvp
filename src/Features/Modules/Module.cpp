@@ -5,6 +5,7 @@
 #include "Module.hpp"
 
 #include <Features/FeatureManager.hpp>
+#include <Utils/Keyboard.hpp>
 #include "Setting.hpp"
 #include "Visual/Interface.hpp"
 
@@ -25,6 +26,26 @@ std::string& Module::getName()
     if (!interfaceMod) interfaceMod = gFeatureManager->mModuleManager->getModule<Interface>();
     auto style = static_cast<NamingStyle>(interfaceMod->mNamingStyle.mValue);
     return mNames[style];
+}
+
+void Module::setKeybind(int key)
+{
+    mKey = key < 0 ? 0 : key;
+}
+
+std::string Module::getKeybindName() const
+{
+    if (mKey == 0)
+    {
+        return "NONE";
+    }
+
+    return Keyboard::getKey(mKey);
+}
+
+bool Module::hasKeybind() const
+{
+    return mKey != 0;
 }
 
 void Module::setEnabled(bool enabled)
@@ -107,6 +128,11 @@ nlohmann::json Module::serialize()
             auto* colorSetting = reinterpret_cast<ColorSetting*>(setting);
             // use the serialize() from the color setting
             j["settings"].push_back(colorSetting->serialize());
+        }
+        else if (setting->mType == SettingType::List)
+        {
+            auto* listSetting = reinterpret_cast<ListSetting*>(setting);
+            j["settings"].push_back(listSetting->serialize());
         }
     }
     return j;

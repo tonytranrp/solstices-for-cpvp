@@ -50,3 +50,18 @@ void AnimationHooks::init()
     func = SigManager::BobHurt;
     mBobHurtDetour = std::make_unique<Detour>("bobHurt", reinterpret_cast<void*>(func), &doBobHurt);
 }
+
+void AnimationHooks::shutdown()
+{
+    if (mSwingDetour)
+    {
+        mSwingDetour->restore();
+        mSwingDetour.reset();
+    }
+
+    if (mBobHurtDetour)
+    {
+        mBobHurtDetour->restore();
+        mBobHurtDetour.reset();
+    }
+}

@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <future>
 #include <memory>
 #include <vector>
@@ -37,6 +38,7 @@ public:
     void removeModule(const std::string& name);
     std::vector<std::shared_ptr<Module>>& getModulesInCategory(int catId);
     std::unordered_map<std::string, std::shared_ptr<Module>> getModuleCategoryMap();
+    void handleModuleKeybinds(uint32_t key, bool isDown);
     void onClientTick();
     [[nodiscard]] nlohmann::json serialize() const;
     nlohmann::json serializeModule(Module* module);

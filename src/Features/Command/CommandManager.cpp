@@ -13,6 +13,7 @@
 #include "Commands/BuildInfoCommand.hpp"
 #include "Commands/ConfigCommand.hpp"
 #include "Commands/CopyNameCommand.hpp"
+#include "Commands/EjectCommand.hpp"
 #include "Commands/FlingCommand.hpp"
 #include "Commands/FriendCommand.hpp"
 #include "Commands/HelpCommand.hpp"
@@ -58,6 +59,7 @@ void CommandManager::init()
     ADD_COMMAND(SnipeCommand);
     ADD_COMMAND(NameProtectCommand);
     ADD_COMMAND(TeleportCommand);
+    ADD_COMMAND(EjectCommand);
 
     ADD_COMMAND(LuaCommand);
 
@@ -88,7 +90,11 @@ void CommandManager::init()
 
 void CommandManager::shutdown()
 {
-    gFeatureManager->mDispatcher->deafen<ChatEvent, &CommandManager::handleCommand>(this);
+    if (gFeatureManager && gFeatureManager->mDispatcher)
+    {
+        gFeatureManager->mDispatcher->deafen<ChatEvent, &CommandManager::handleCommand>(this);
+    }
+
     mCommands.clear();
 
     spdlog::info("Successfully shut down CommandManager");

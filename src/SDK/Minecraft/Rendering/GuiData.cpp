@@ -10,6 +10,7 @@
 #include <SDK/Minecraft/Network/Packets/TextPacket.hpp>
 #include <Utils/MemUtils.hpp>
 #include <Features/Events/ChatEvent.hpp>
+#include <Features/FeatureManager.hpp>
 
 class DummyData
 {
@@ -19,20 +20,25 @@ public:
 
 void GuiData::displayClientMessageQueued(const std::string& msg)
 {
-    if (!ClientInstance::get()->getLocalPlayer()) return;
+    auto* clientInstance = ClientInstance::get();
+    if (!clientInstance || !clientInstance->getLocalPlayer()) return;
 
     BaseTickHook::queueMsg(msg);
 }
 
 void GuiData::displayClientMessage(const std::string& msg)
 {
-    if (!ClientInstance::get()->getLocalPlayer()) return;
+    auto* clientInstance = ClientInstance::get();
+    if (!clientInstance || !clientInstance->getLocalPlayer()) return;
 
     // This is stupid.
     static std::unique_ptr<DummyData> dummyData = std::make_unique<DummyData>();
     MemUtils::callFastcall<void>(SigManager::GuiData_displayClientMessage, this, msg, dummyData.get(), false);
 
     // Dispatch the chat event
-    auto holder = nes::make_holder<ChatEvent>(msg);
-    gFeatureManager->mDispatcher->trigger(holder);
+    if (gFeatureManager && gFeatureManager->mDispatcher)
+    {
+        auto holder = nes::make_holder<ChatEvent>(msg);
+        gFeatureManager->mDispatcher->trigger(holder);
+    }
 }

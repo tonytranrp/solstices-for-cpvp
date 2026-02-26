@@ -47,6 +47,7 @@ public:
     void onWindowResizeEvent(class WindowResizeEvent& event);
     void onMouseEvent(class MouseEvent& event);
     void onKeyEvent(class KeyEvent& event);
+    void onProgressOverlayEvent(class ProgressOverlayEvent& event);
     float getEaseAnim(EasingUtil ease, int mode);
     void onRenderEvent(class RenderEvent& event);
 

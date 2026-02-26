@@ -4,6 +4,7 @@
 
 #include "MemUtils.hpp"
 #include <libhat/Access.hpp>
+#include <Utils/Concurrency/TaskSystem.hpp>
 #include <windows.h>
 #include <Psapi.h>
 #include <libhat/Process.hpp>
@@ -190,7 +191,6 @@ std::vector<uintptr_t> MemUtils::findPattern(const std::string& pattern)
     std::vector<uintptr_t> results;
     MODULEINFO moduleInfo;
     GetModuleInformation(GetCurrentProcess(), GetModuleHandle(NULL), &moduleInfo, sizeof(MODULEINFO));
-    int THREAD_COUNT = std::thread::hardware_concurrency();
     uintptr_t start = reinterpret_cast<uintptr_t>(moduleInfo.lpBaseOfDll);
     uintptr_t end = start + moduleInfo.SizeOfImage;
     const char* pat = pattern.c_str();
@@ -260,26 +260,42 @@ uintptr_t MemUtils::findString(const std::string& string) {
     uintptr_t start = reinterpret_cast<uintptr_t>(moduleInfo.lpBaseOfDll);
     uintptr_t end = start + moduleInfo.SizeOfImage;
 
-    // Determine number of threads to use
-    const size_t numThreads = std::thread::hardware_concurrency();
-    const uintptr_t rangeSize = (end - start) / numThreads;
+    const uintptr_t totalRange = end - start;
+    if (totalRange == 0) {
+        return 0;
+    }
 
-    std::vector<std::future<uintptr_t>> futures;
-    for (size_t i = 0; i < numThreads; ++i) {
-        uintptr_t rangeStart = start + i * rangeSize;
-        uintptr_t rangeEnd = (i == numThreads - 1) ? end : rangeStart + rangeSize;
+    const size_t workers = std::max<size_t>(1, TaskSystem::workerCount());
+    const size_t taskCount = std::min<size_t>(workers, static_cast<size_t>(totalRange));
+    const uintptr_t rangeSize = totalRange / taskCount;
+    std::atomic<uintptr_t> found = 0;
+    std::vector<std::future<void>> futures;
+    futures.reserve(taskCount);
 
-        futures.emplace_back(std::async(std::launch::async, &MemUtils::findStringInRange, string, rangeStart, rangeEnd));
+    for (size_t i = 0; i < taskCount; ++i) {
+        const uintptr_t rangeStart = start + i * rangeSize;
+        const uintptr_t rangeEnd = (i == taskCount - 1) ? end : rangeStart + rangeSize;
+
+        futures.emplace_back(TaskSystem::enqueue([&string, rangeStart, rangeEnd, &found]() {
+            if (found.load(std::memory_order_acquire) != 0) {
+                return;
+            }
+
+            const uintptr_t result = MemUtils::findStringInRange(string, rangeStart, rangeEnd);
+            if (result == 0) {
+                return;
+            }
+
+            uintptr_t expected = 0;
+            found.compare_exchange_strong(expected, result, std::memory_order_acq_rel);
+        }));
     }
 
     for (auto& future : futures) {
-        uintptr_t result = future.get();
-        if (result != 0) {
-            return result;
-        }
+        future.wait();
     }
 
-    return 0;
+    return found.load(std::memory_order_acquire);
 }
 
 uintptr_t MemUtils::findReference(uintptr_t address) {
@@ -292,26 +308,42 @@ uintptr_t MemUtils::findReference(uintptr_t address) {
     uintptr_t start = reinterpret_cast<uintptr_t>(moduleInfo.lpBaseOfDll);
     uintptr_t end = start + moduleInfo.SizeOfImage;
 
-    // Determine number of threads to use
-    const size_t numThreads = std::thread::hardware_concurrency();
-    const uintptr_t rangeSize = (end - start) / numThreads;
+    const uintptr_t totalRange = end - start;
+    if (totalRange == 0) {
+        return 0;
+    }
 
-    std::vector<std::future<uintptr_t>> futures;
-    for (size_t i = 0; i < numThreads; ++i) {
-        uintptr_t rangeStart = start + i * rangeSize;
-        uintptr_t rangeEnd = (i == numThreads - 1) ? end : rangeStart + rangeSize;
+    const size_t workers = std::max<size_t>(1, TaskSystem::workerCount());
+    const size_t taskCount = std::min<size_t>(workers, static_cast<size_t>(totalRange));
+    const uintptr_t rangeSize = totalRange / taskCount;
+    std::atomic<uintptr_t> found = 0;
+    std::vector<std::future<void>> futures;
+    futures.reserve(taskCount);
 
-        futures.emplace_back(std::async(std::launch::async, &MemUtils::findReferenceInRange, address, rangeStart, rangeEnd));
+    for (size_t i = 0; i < taskCount; ++i) {
+        const uintptr_t rangeStart = start + i * rangeSize;
+        const uintptr_t rangeEnd = (i == taskCount - 1) ? end : rangeStart + rangeSize;
+
+        futures.emplace_back(TaskSystem::enqueue([address, rangeStart, rangeEnd, &found]() {
+            if (found.load(std::memory_order_acquire) != 0) {
+                return;
+            }
+
+            const uintptr_t result = MemUtils::findReferenceInRange(address, rangeStart, rangeEnd);
+            if (result == 0) {
+                return;
+            }
+
+            uintptr_t expected = 0;
+            found.compare_exchange_strong(expected, result, std::memory_order_acq_rel);
+        }));
     }
 
     for (auto& future : futures) {
-        uintptr_t result = future.get();
-        if (result != 0) {
-            return result;
-        }
+        future.wait();
     }
 
-    return 0;
+    return found.load(std::memory_order_acquire);
 }
 
 std::vector<uintptr_t> MemUtils::findReferences(uintptr_t address) {

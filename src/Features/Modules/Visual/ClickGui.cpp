@@ -6,30 +6,41 @@
 
 #include <Features/Events/MouseEvent.hpp>
 #include <Features/Events/KeyEvent.hpp>
+#include <Features/Events/ProgressOverlayEvent.hpp>
 #include <Features/GUI/ModernDropdown.hpp>
 #include <Features/GUI/ScriptingGui.hpp>
 #include <SDK/Minecraft/ClientInstance.hpp>
+#include <mutex>
 
 static bool lastMouseState = false;
 static bool isPressingShift = false;
 static ModernGui modernGui = ModernGui();
+static std::recursive_mutex modernGuiMutex;
 
 
 void ClickGui::onEnable()
 {
+    std::lock_guard<std::recursive_mutex> lock(modernGuiMutex);
     auto ci = ClientInstance::get();
     lastMouseState = !ci->getMouseGrabbed();
+    isPressingShift = false;
+    modernGui.cancelBindings();
 
     ci->releaseMouse();
 
     gFeatureManager->mDispatcher->listen<MouseEvent, &ClickGui::onMouseEvent>(this);
     gFeatureManager->mDispatcher->listen<KeyEvent, &ClickGui::onKeyEvent, nes::event_priority::FIRST>(this);
+    gFeatureManager->mDispatcher->listen<ProgressOverlayEvent, &ClickGui::onProgressOverlayEvent>(this);
 }
 
 void ClickGui::onDisable()
 {
+    std::lock_guard<std::recursive_mutex> lock(modernGuiMutex);
     gFeatureManager->mDispatcher->deafen<MouseEvent, &ClickGui::onMouseEvent>(this);
     gFeatureManager->mDispatcher->deafen<KeyEvent, &ClickGui::onKeyEvent>(this);
+    gFeatureManager->mDispatcher->deafen<ProgressOverlayEvent, &ClickGui::onProgressOverlayEvent>(this);
+    isPressingShift = false;
+    modernGui.cancelBindings();
 
     if (lastMouseState) {
         ClientInstance::get()->grabMouse();
@@ -38,6 +49,7 @@ void ClickGui::onDisable()
 
 void ClickGui::onWindowResizeEvent(WindowResizeEvent& event)
 {
+    std::lock_guard<std::recursive_mutex> lock(modernGuiMutex);
     modernGui.onWindowResizeEvent(event); // are you okay in the head 😭
 }
 
@@ -49,23 +61,68 @@ void ClickGui::onMouseEvent(MouseEvent& event)
 
 void ClickGui::onKeyEvent(KeyEvent& event)
 {
-    if (event.mKey == VK_ESCAPE) {
-        if (!modernGui.isBinding && event.mPressed) this->toggle();
-        event.mCancelled = true;
+    std::lock_guard<std::recursive_mutex> lock(modernGuiMutex);
+    if (event.mKey == VK_SHIFT)
+    {
+        isPressingShift = event.mPressed;
     }
 
-    // Consume all key events to prevent unintended module toggles
-    if (modernGui.isBinding) {
+    if (!event.mPressed)
+    {
+        return;
+    }
+
+    if (modernGui.commitBindingKey(event.mKey))
+    {
+        ClientInstance::get()->playUi(event.mKey == VK_ESCAPE ? "random.break" : "random.orb", 0.75f, 1.0f);
         event.mCancelled = true;
         return;
     }
 
-    if (event.mKey == VK_SHIFT && event.mPressed) {
-        isPressingShift = true;
+    if (event.mKey == mKey)
+    {
+        this->toggle();
         event.mCancelled = true;
+        return;
     }
-    else {
-        isPressingShift = false;
+
+    if (event.mKey == VK_ESCAPE)
+    {
+        if (modernGui.closeOverlayOnEscape())
+        {
+            event.mCancelled = true;
+            return;
+        }
+
+        if (modernGui.hasSearchQuery())
+        {
+            modernGui.clearSearchQuery();
+        }
+        else
+        {
+            this->toggle();
+        }
+        event.mCancelled = true;
+        return;
+    }
+
+    event.mCancelled = true;
+}
+
+void ClickGui::onProgressOverlayEvent(ProgressOverlayEvent& event)
+{
+    std::lock_guard<std::recursive_mutex> lock(modernGuiMutex);
+    switch (event.mAction)
+    {
+    case ProgressOverlayEvent::Action::Open:
+        modernGui.openProgressOverlay(event.mOwnerId, event.mTitle, event.mStatus);
+        break;
+    case ProgressOverlayEvent::Action::Update:
+        modernGui.updateProgressOverlay(event.mOwnerId, event.mProgress, event.mStatus);
+        break;
+    case ProgressOverlayEvent::Action::Close:
+        modernGui.closeProgressOverlay(event.mOwnerId);
+        break;
     }
 }
 
@@ -87,6 +144,7 @@ enum class Tab
 
 void ClickGui::onRenderEvent(RenderEvent& event)
 {
+    std::lock_guard<std::recursive_mutex> lock(modernGuiMutex);
     if (mEnabled) ClientInstance::get()->releaseMouse();
     static float animation = 0;
     static int styleMode = 0; // Ease enum

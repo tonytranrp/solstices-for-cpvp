@@ -5,6 +5,7 @@
 #include <build_info.h>
 #include <Features/Modules/ModuleManager.hpp>
 #include <Utils/OAuthUtils.hpp>
+#include <SDK/Minecraft/ClientInstance.hpp>
 
 #include "Combat/Aura.hpp"
 #include "Combat/AutoAnchor.hpp"
@@ -425,6 +426,51 @@ std::unordered_map<std::string, std::shared_ptr<Module>> ModuleManager::getModul
     return map;
 }
 
+void ModuleManager::handleModuleKeybinds(uint32_t key, bool isDown)
+{
+    auto* clientInstance = ClientInstance::get();
+    if (!clientInstance)
+    {
+        return;
+    }
+
+    const auto* clickGui = getModule<ClickGui>();
+    const bool chatOpen = clientInstance->getScreenName() == "chat_screen";
+    const bool mouseGrabbed = clientInstance->getMouseGrabbed();
+
+    for (auto& module : mModules)
+    {
+        if (!module)
+        {
+            continue;
+        }
+
+        if (chatOpen)
+        {
+            continue;
+        }
+
+        if (mouseGrabbed && module.get() != clickGui)
+        {
+            continue;
+        }
+
+        if (module->mKey != static_cast<int>(key) || module->mKey == 0)
+        {
+            continue;
+        }
+
+        if (module->mEnableWhileHeld)
+        {
+            module->mWantedState = isDown;
+        }
+        else if (isDown)
+        {
+            module->toggle();
+        }
+    }
+}
+
 void ModuleManager::onClientTick()
 {
     for (auto& module : mModules)
@@ -578,6 +624,23 @@ void ModuleManager::deserialize(const nlohmann::json& j, bool showMessages)
                                 for (int i = 0; i < 4; i++)
                                 {
                                     colorSetting->mValue[i] = settingValue["colorValue"][i];
+                                }
+                            } else if (set->mType == SettingType::List)
+                            {
+                                auto* listSetting = static_cast<ListSetting*>(set);
+                                listSetting->clearSelection();
+
+                                if (settingValue.contains("listValues") && settingValue["listValues"].is_array())
+                                {
+                                    for (const auto& entry : settingValue["listValues"])
+                                    {
+                                        if (!entry.is_string())
+                                        {
+                                            continue;
+                                        }
+
+                                        listSetting->select(entry.get<std::string>(), false);
+                                    }
                                 }
                             }
 

@@ -301,7 +301,6 @@ public:
     Streams::DataWriter mWriter = nullptr;
     char mBuffer[1024];
 
-    std::thread mReceiveThread;
     std::string mCurrentUsername = "";
     std::vector<std::string> mQueuedMessages;
     uint64_t mLastPing = 0;

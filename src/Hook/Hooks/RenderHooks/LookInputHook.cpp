@@ -32,3 +32,12 @@ void LookInputHook::init()
 {
     mDetour = std::make_unique<Detour>("CameraDirectLookSystemUtil::_handleLookInput", reinterpret_cast<void*>(SigManager::CameraDirectLookSystemUtil_handleLookInput), &_handleLookInput);
 }
+
+void LookInputHook::shutdown()
+{
+    if (mDetour)
+    {
+        mDetour->restore();
+        mDetour.reset();
+    }
+}

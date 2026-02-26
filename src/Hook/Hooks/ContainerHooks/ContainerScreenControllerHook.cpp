@@ -34,3 +34,12 @@ void ContainerScreenControllerHook::init()
     auto func = SigManager::ContainerScreenController_tick;
     mDetour = std::make_unique<Detour>("ContainerScreenController::tick", reinterpret_cast<void*>(func), &ContainerScreenControllerHook::onContainerTick);
 }
+
+void ContainerScreenControllerHook::shutdown()
+{
+    if (mDetour)
+    {
+        mDetour->restore();
+        mDetour.reset();
+    }
+}

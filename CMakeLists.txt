@@ -70,18 +70,34 @@ CPMAddPackage(
         NAME DirectXTK
         GITHUB_REPOSITORY microsoft/DirectXTK
         GIT_TAG main
+        OPTIONS
+        "BUILD_TOOLS OFF"
+        "BUILD_FUZZING OFF"
 )
 
 CPMAddPackage(
         NAME cryptopp-cmake
         GITHUB_REPOSITORY abdes/cryptopp-cmake
         GIT_TAG master
+        OPTIONS
+        "CRYPTOPP_BUILD_TESTING OFF"
+        "CRYPTOPP_INSTALL OFF"
 )
 
 CPMAddPackage(
         NAME LuaBridge3
         GITHUB_REPOSITORY kunitoki/LuaBridge3
         GIT_TAG dbd132e727d0701bbfbefe83c403d8e5e640886c
+)
+
+CPMAddPackage(
+        NAME taskflow
+        GITHUB_REPOSITORY taskflow/taskflow
+        GIT_TAG v3.7.0
+        OPTIONS
+        "TF_BUILD_EXAMPLES OFF"
+        "TF_BUILD_TESTS OFF"
+        "TF_BUILD_BENCHMARKS OFF"
 )
 
 if(MSVC)
@@ -96,32 +112,42 @@ list(LENGTH HLSL_FILES_VS HLSL_FILES_VS_COUNT)
 list(LENGTH HLSL_FILES_PS HLSL_FILES_PS_COUNT)
 math(EXPR HLSL_FILES_COUNT "${HLSL_FILES_VS_COUNT} + ${HLSL_FILES_PS_COUNT}")
 
-add_custom_target(SolsticeShaders ALL COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/SolsticeShaders COMMENT "Building ${HLSL_FILES_COUNT} shaders" VERBATIM)
+set(HLSL_SHADER_OUTPUTS)
 
 foreach(FILE ${HLSL_FILES_VS})
     get_filename_component(FILE_WE ${FILE} NAME_WE)
-    add_custom_command(TARGET SolsticeShaders
-            COMMAND cmd /c fxc.exe /nologo /Evertex_main /T vs_5_0 /Zi /Fh ${SHADER_BIN_DIR}/${FILE_WE}.inc /Fd ${CMAKE_BINARY_DIR}/${FILE_WE}.pdb ${FILE} > nul
+    set(SHADER_OUT ${SHADER_BIN_DIR}/${FILE_WE}.inc)
+    add_custom_command(OUTPUT ${SHADER_OUT}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_BIN_DIR}
+            COMMAND cmd /c fxc.exe /nologo /Evertex_main /T vs_5_0 /Zi /Fh ${SHADER_OUT} /Fd ${CMAKE_BINARY_DIR}/${FILE_WE}.pdb ${FILE} > nul
             DEPENDS ${FILE}
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
             COMMENT "Building shader ${FILE}"
             VERBATIM
     )
+    list(APPEND HLSL_SHADER_OUTPUTS ${SHADER_OUT})
 endforeach(FILE)
 
 foreach(FILE ${HLSL_FILES_PS})
     get_filename_component(FILE_WE ${FILE} NAME_WE)
-    add_custom_command(TARGET SolsticeShaders
-            COMMAND cmd /c fxc.exe /nologo /Epixel_main /T ps_5_0 /Zi /Fh ${SHADER_BIN_DIR}/${FILE_WE}.inc /Fd ${CMAKE_BINARY_DIR}/${FILE_WE}.pdb ${FILE} > nul
+    set(SHADER_OUT ${SHADER_BIN_DIR}/${FILE_WE}.inc)
+    add_custom_command(OUTPUT ${SHADER_OUT}
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADER_BIN_DIR}
+            COMMAND cmd /c fxc.exe /nologo /Epixel_main /T ps_5_0 /Zi /Fh ${SHADER_OUT} /Fd ${CMAKE_BINARY_DIR}/${FILE_WE}.pdb ${FILE} > nul
             DEPENDS ${FILE}
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
             COMMENT "Building shader ${FILE}"
             VERBATIM
     )
+    list(APPEND HLSL_SHADER_OUTPUTS ${SHADER_OUT})
 endforeach(FILE)
 
+add_custom_target(SolsticeShaders ALL
+        DEPENDS ${HLSL_SHADER_OUTPUTS}
+        COMMENT "Building ${HLSL_FILES_COUNT} shaders"
+)
+
 include_directories(${SHADER_BIN_DIR})
-find_package(OpenMP)
 
 add_custom_target(generate_build_info
         COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/GenerateBuildInfo.cmake
@@ -130,7 +156,7 @@ add_custom_target(generate_build_info
 
 include_directories(${CMAKE_BINARY_DIR})
 
-set(CMAKE_CXX_STANDARD 26)
+set(CMAKE_CXX_STANDARD 23)
 
 add_compile_definitions(NOMINMAX)
 add_compile_definitions(JM_XORSTR_DISABLE_AVX_INTRINSICS)
@@ -304,6 +330,12 @@ add_subdirectory(include/libhat)
 add_subdirectory(include/ImGui)
 add_subdirectory(include/Kiero)
 add_subdirectory(include/nes)
+
+# Solstice only needs Luau libraries; disable Luau apps/tests and use DLL CRT.
+set(LUAU_BUILD_CLI OFF CACHE BOOL "Disable Luau CLI targets for Solstice builds" FORCE)
+set(LUAU_BUILD_TESTS OFF CACHE BOOL "Disable Luau test targets for Solstice builds" FORCE)
+set(LUAU_BUILD_WEB OFF CACHE BOOL "Disable Luau web target for Solstice builds" FORCE)
+set(LUAU_STATIC_CRT OFF CACHE BOOL "Use DLL CRT for Luau to match Solstice Debug runtime" FORCE)
 add_subdirectory(include/Luau)
 
 
@@ -316,7 +348,7 @@ target_include_directories(Solstice PRIVATE include/Luau)
 target_include_directories(Solstice PRIVATE include/Luau/Compiler/include)
 target_include_directories(Solstice PRIVATE include/Luau/VM/include)
 
-target_link_libraries(Solstice PRIVATE OpenMP::OpenMP_CXX LuaBridge DirectXTK Luau.Compiler Luau.VM Luau.Ast spdlog version.lib nlohmann_json glm minhook kiero nuvola_event_system libhat dbghelp.lib winmm.lib magic_enum d3d12.lib d3d11.lib d2d1.lib dxgi.lib dxguid.lib dwrite.lib winmm.lib dbghelp.lib comctl32.lib ws2_32.lib cryptopp ole32.lib Mmdevapi.lib)
+target_link_libraries(Solstice PRIVATE LuaBridge DirectXTK Taskflow Luau.Compiler Luau.VM Luau.Ast spdlog version.lib nlohmann_json glm minhook kiero nuvola_event_system libhat dbghelp.lib winmm.lib magic_enum d3d12.lib d3d11.lib d2d1.lib dxgi.lib dxguid.lib dwrite.lib winmm.lib dbghelp.lib comctl32.lib ws2_32.lib cryptopp ole32.lib runtimeobject.lib windowsapp.lib Mmdevapi.lib)
 
 set_property(TARGET Solstice nlohmann_json minhook spdlog LuaBridge cryptopp Luau.Compiler Luau.VM Luau.Ast DirectXTK glm kiero nuvola_event_system magic_enum libhat PROPERTY MSVC_RUNTIME_LIBRARY "$<$<CONFIG:Debug>:MultiThreadedDLL>$<$<CONFIG:Release>:MultiThreaded>")
 

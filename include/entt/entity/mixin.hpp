@@ -91,6 +91,8 @@ private:
 public:
     /*! @brief Allocator type. */
     using allocator_type = typename underlying_type::allocator_type;
+    /*! @brief Base storage type. */
+    using base_type = typename underlying_type::base_type;
     /*! @brief Underlying entity identifier. */
     using entity_type = typename underlying_type::entity_type;
     /*! @brief Expected registry type. */

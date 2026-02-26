@@ -98,7 +98,10 @@ struct std::hash<BlockPos>
 {
     size_t operator()(const BlockPos& obj) const noexcept
     {
-        return obj.x ^ obj.y ^ obj.z;
+        const std::size_t hx = static_cast<std::size_t>(obj.x) * static_cast<std::size_t>(73856093);
+        const std::size_t hy = static_cast<std::size_t>(obj.y) * static_cast<std::size_t>(19349663);
+        const std::size_t hz = static_cast<std::size_t>(obj.z) * static_cast<std::size_t>(83492791);
+        return hx ^ hy ^ hz;
     }
 };
 

@@ -14,4 +14,5 @@ public:
 
     static bool onPreGame(void* _this);
     void init() override;
+    void shutdown() override;
 };

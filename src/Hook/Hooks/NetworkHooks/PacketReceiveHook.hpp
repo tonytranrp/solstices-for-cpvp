@@ -5,6 +5,8 @@
 
 #include <Hook/Hook.hpp>
 #include <SDK/Minecraft/Network/PacketID.hpp>
+#include <unordered_map>
+#include <vector>
 
 class PacketReceiveHook : public Hook {
 public:
@@ -12,11 +14,14 @@ public:
         mName = "PacketReceiveHook";
     }
 
-    static std::unordered_map<PacketID, std::unique_ptr<Detour>> mDetours;
+    static std::unordered_map<PacketID, Detour*> mDetours;
+    static std::unordered_map<uintptr_t, Detour*> mDetoursByHandler;
+    static std::vector<std::unique_ptr<Detour>> mOwnedDetours;
     static inline void* NetworkIdentifier = nullptr;
 
     static void* onPacketSend(void* _this, void* networkIdentifier, void* netEventCallback, std::shared_ptr<class Packet> packet);
     static void handlePacket(std::shared_ptr<Packet> packet);
     void init() override;
+    void shutdown() override;
 };
 

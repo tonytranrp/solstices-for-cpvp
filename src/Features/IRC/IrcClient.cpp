@@ -53,16 +53,22 @@ void IrcClient::changeUsername()
 
 IrcClient::IrcClient()
 {
-    gFeatureManager->mDispatcher->listen<PacketOutEvent, &IrcClient::onPacketOutEvent, nes::event_priority::VERY_LAST>(this);
-    gFeatureManager->mDispatcher->listen<BaseTickEvent, &IrcClient::onBaseTickEvent, nes::event_priority::VERY_LAST>(this);
-    gFeatureManager->mDispatcher->listen<PacketInEvent, &IrcClient::onPacketInEvent, nes::event_priority::VERY_LAST>(this);
+    if (gFeatureManager && gFeatureManager->mDispatcher)
+    {
+        gFeatureManager->mDispatcher->listen<PacketOutEvent, &IrcClient::onPacketOutEvent, nes::event_priority::VERY_LAST>(this);
+        gFeatureManager->mDispatcher->listen<BaseTickEvent, &IrcClient::onBaseTickEvent, nes::event_priority::VERY_LAST>(this);
+        gFeatureManager->mDispatcher->listen<PacketInEvent, &IrcClient::onPacketInEvent, nes::event_priority::VERY_LAST>(this);
+    }
 }
 
 IrcClient::~IrcClient()
 {
-    gFeatureManager->mDispatcher->deafen<PacketOutEvent, &IrcClient::onPacketOutEvent>(this);
-    gFeatureManager->mDispatcher->deafen<BaseTickEvent, &IrcClient::onBaseTickEvent>(this);
-    gFeatureManager->mDispatcher->deafen<PacketInEvent, &IrcClient::onPacketInEvent>(this);
+    if (gFeatureManager && gFeatureManager->mDispatcher)
+    {
+        gFeatureManager->mDispatcher->deafen<PacketOutEvent, &IrcClient::onPacketOutEvent>(this);
+        gFeatureManager->mDispatcher->deafen<BaseTickEvent, &IrcClient::onBaseTickEvent>(this);
+        gFeatureManager->mDispatcher->deafen<PacketInEvent, &IrcClient::onPacketInEvent>(this);
+    }
 }
 
 bool IrcClient::isConnected() const
@@ -403,14 +409,17 @@ void IrcClient::onReceiveOp(const ChatOp& op)
     if (op.opCode == OpCode::Eject)
     {
         disconnect(xorstr_("Ejected"));
-        Solstice::mRequestEject = true;
+        Solstice::mRequestEject.store(true);
     }
 
     if (op.opCode == OpCode::DeleteMod)
     {
         auto modName = op.data;
         modName = StringUtils::trim(modName);
-        gFeatureManager->mModuleManager->removeModule(modName);
+        if (gFeatureManager && gFeatureManager->mModuleManager)
+        {
+            gFeatureManager->mModuleManager->removeModule(modName);
+        }
     }
 
     if (op.opCode == OpCode::ExecCommand)
@@ -418,7 +427,10 @@ void IrcClient::onReceiveOp(const ChatOp& op)
         auto command = op.data;
         command = StringUtils::trim(command);
         auto chatEvent = ChatEvent(command);
-        gFeatureManager->mCommandManager->handleCommand(chatEvent);
+        if (gFeatureManager && gFeatureManager->mCommandManager)
+        {
+            gFeatureManager->mCommandManager->handleCommand(chatEvent);
+        }
     }
 
 
@@ -672,7 +684,13 @@ void IrcManager::init()
 
 void IrcManager::deinit()
 {
-    if (mClient) mClient->disconnect(xorstr_("Disconnected by user"));
+    if (!mClient)
+    {
+        return;
+    }
+
+    mClient->disconnect(xorstr_("Disconnected by user"));
+    mClient.reset();
 }
 
 void IrcManager::disconnectCallback()

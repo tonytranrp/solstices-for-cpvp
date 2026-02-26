@@ -32,3 +32,12 @@ void HoverTextRendererHook::init()
 {
     mHoverTextRendererRenderDetour = std::make_unique<Detour>("HoverTextRenderer::render", reinterpret_cast<void*>(SigManager::HoverTextRenderer_render), &HoverTextRendererHook::onHoverTextRendererRender);
 }
+
+void HoverTextRendererHook::shutdown()
+{
+    if (mHoverTextRendererRenderDetour)
+    {
+        mHoverTextRendererRenderDetour->restore();
+        mHoverTextRendererRenderDetour.reset();
+    }
+}

@@ -22,3 +22,12 @@ void PreGameHook::init()
 {
     mDetour = std::make_unique<Detour>("ClientInstance::isPreGame", reinterpret_cast<void*>(SigManager::ClientInstance_isPreGame), reinterpret_cast<void*>(&onPreGame));
 }
+
+void PreGameHook::shutdown()
+{
+    if (mDetour)
+    {
+        mDetour->restore();
+        mDetour.reset();
+    }
+}

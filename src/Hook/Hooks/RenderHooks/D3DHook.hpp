@@ -5,6 +5,9 @@
 #include <SDK/SigManager.hpp>
 #include <SDK/Minecraft/ClientInstance.hpp>
 #include <Utils/Structs.hpp>
+#include <atomic>
+#include <mutex>
+#include <queue>
 //
 // Created by vastrakai on 6/29/2024.
 //
@@ -16,10 +19,11 @@ class D3DHook : public Hook
 public:
     D3DHook() : Hook() {
         mName = "D3DHook";
-        FrameTransforms = std::make_unique<std::queue<FrameTransform>>();
     }
 
-    static inline std::unique_ptr<std::queue<FrameTransform>> FrameTransforms = nullptr;
+    static inline std::queue<FrameTransform> FrameTransforms = {};
+    static inline std::mutex FrameTransformsMutex = {};
+    static inline std::atomic_bool AcceptFrameTransforms = true;
     static inline int transformDelay = 3;
     static inline bool forceFallback = false;
 

@@ -21,5 +21,6 @@ public:
     static void* onDrawImage(void* context, mce::TexturePtr* texture, glm::vec2* pos, glm::vec2* size, glm::vec2* uv, mce::Color* color, void* unk);
     static void initVt(void* ctx);
     void init() override;
+    void shutdown() override;
 };
 

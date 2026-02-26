@@ -43,4 +43,5 @@ public:
 
     static void onHoverTextRendererRender(HoverTextRenderer* _this, void* mRenderContext, ClientInstance* mClient, glm::vec4* mRenderAABB, int mPass);
     void init() override;
+    void shutdown() override;
 };

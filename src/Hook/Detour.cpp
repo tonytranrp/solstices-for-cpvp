@@ -71,6 +71,12 @@ void Detour::restore() const
     case MH_OK:
         spdlog::info("Restored detour for {}", mName);
         break;
+    case MH_ERROR_DISABLED:
+        spdlog::debug("Detour for {} was already disabled", mName);
+        break;
+    case MH_ERROR_NOT_CREATED:
+        spdlog::debug("Detour for {} was not created in MinHook", mName);
+        break;
     default:
         spdlog::critical("Failed to restore detour for {} [MH_DisableHook returned {}]", mName, magic_enum::enum_name(status));
         break;

@@ -28,3 +28,12 @@ void NametagRenderHook::init()
 {
     mRenderDetour = std::make_unique<Detour>("Unknown::renderNametag", reinterpret_cast<void*>(SigManager::Unknown_renderNametag), &NametagRenderHook::render);
 }
+
+void NametagRenderHook::shutdown()
+{
+    if (mRenderDetour)
+    {
+        mRenderDetour->restore();
+        mRenderDetour.reset();
+    }
+}

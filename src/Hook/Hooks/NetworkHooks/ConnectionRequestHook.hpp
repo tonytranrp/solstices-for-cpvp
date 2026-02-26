@@ -32,5 +32,6 @@ public:
                                          std::string* thirdPartyName, bool thirdPartyNameOnly, std::string* platformOnlineID, std::string* platformOfflineID,
                                          std::string* capeId, bool CompatibleWithClientSideChunkGen);
     void init() override;
+    void shutdown() override;
 };
 
